@@ -66,24 +66,38 @@ export default function DayViewPage() {
   // Calendar Customization States
   const [showWeekends, setShowWeekends] = useState(false); // Default weekdays only
 
-  // Calendar Day Display Checkboxes (Checkable Metrics)
-  const [calendarDisplayMetrics, setCalendarDisplayMetrics] = useState({
-    $: true,
-    Points: false,
-    Ticks: false,
-    R: false,
-    '%': false,
+  // Calendar Day Display Checkboxes with LocalStorage Persistence
+  const [calendarDisplayMetrics, setCalendarDisplayMetrics] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('tryhard_calendar_metrics');
+      if (saved) {
+        try { return JSON.parse(saved); } catch (e) {}
+      }
+    }
+    return { $: true, Points: false, Ticks: false, R: false, '%': false };
   });
+
+  useEffect(() => {
+    localStorage.setItem('tryhard_calendar_metrics', JSON.stringify(calendarDisplayMetrics));
+  }, [calendarDisplayMetrics]);
+
   const [showCalendarMetricMenu, setShowCalendarMetricMenu] = useState(false);
 
-  // Weekly Summary Column Display Checkboxes
-  const [weeklyDisplayMetrics, setWeeklyDisplayMetrics] = useState({
-    $: true,
-    Points: true,
-    Ticks: false,
-    R: false,
-    '%': false,
+  // Weekly Summary Column Display Checkboxes with LocalStorage Persistence
+  const [weeklyDisplayMetrics, setWeeklyDisplayMetrics] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('tryhard_weekly_metrics');
+      if (saved) {
+        try { return JSON.parse(saved); } catch (e) {}
+      }
+    }
+    return { $: true, Points: true, Ticks: false, R: false, '%': false };
   });
+
+  useEffect(() => {
+    localStorage.setItem('tryhard_weekly_metrics', JSON.stringify(weeklyDisplayMetrics));
+  }, [weeklyDisplayMetrics]);
+
   const [showWeeklyMetricMenu, setShowWeeklyMetricMenu] = useState(false);
 
   // Journal Note Editing State
