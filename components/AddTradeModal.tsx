@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { db, syncTagToMasterTables } from '@/lib/db';
+import { cloudDb } from '@/lib/cloudDb';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { X, Upload, Plus, Sparkles, FileSpreadsheet, AlertCircle } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -52,6 +53,7 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
 
   // Account Selection
   const [selectedAccountName, setSelectedAccountName] = useState('');
+  const [accounts, setAccounts] = useState<any[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
 
@@ -68,11 +70,24 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
   const [newTagInput, setNewTagInput] = useState('');
   const [activeNewTagType, setActiveNewTagType] = useState<'strategy' | 'setup' | 'mistake' | null>(null);
 
-  // Database Queries
+  // Database Queries (keeping strategies/setups/mistakes local or syncing as needed)
   const strategies = useLiveQuery(() => db.strategies.toArray()) || [];
   const setups = useLiveQuery(() => db.setups.toArray()) || [];
   const mistakes = useLiveQuery(() => db.mistakes.toArray()) || [];
-  const accounts = useLiveQuery(() => db.accounts.toArray()) || [];
+
+  // Fetch accounts from cloud on open
+  useEffect(() => {
+    async function fetchAccounts() {
+      const accs = await cloudDb.getAccounts();
+      setAccounts(accs);
+      if (accs.length > 0 && !selectedAccountName) {
+        setSelectedAccountName(accs[0].name);
+      }
+    }
+    if (isOpen) {
+      fetchAccounts();
+    }
+  }, [isOpen]);
 
   // Auto-select first account if available
   useEffect(() => {
@@ -165,7 +180,7 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
     setActiveNewTagType(null);
   };
 
-  // Automated Statement File Parser supporting Tradovate CSV & AMP Excel
+  // Automated Statement File Parser supporting Tradovate CSV & AMP Excel with Cloud Sync
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !selectedAccount) return;
@@ -191,8 +206,6 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
       const textContent = await file.text();
 
       if (selectedAccount.inputType === 'Tradovate') {
-        // Parse Tradovate CSV format:
-        // symbol,_priceFormat,_priceFormatType,_tickSize,buyFillId,sellFillId,qty,buyPrice,sellPrice,pnl,boughtTimestamp,soldTimestamp,duration
         const lines = textContent.split('\n').filter(l => l.trim() !== '');
         if (lines.length < 2) throw new Error('Tradovate CSV file is empty or formatted incorrectly.');
 
@@ -213,8 +226,8 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
           const rawPnL = rowObj['pnl'] ? rowObj['pnl'].replace('$', '').replace(',', '') : '0';
           const netPnL = parseFloat(rawPnL) || 0;
 
-          const boughtTs = rowObj['boughtTimestamp'] || ''; // e.g., "08/03/2026 00:56:09"
-          const soldTs = rowObj['soldTimestamp'] || '';     // e.g., "08/03/2026 00:57:13"
+          const boughtTs = rowObj['boughtTimestamp'] || '';
+          const soldTs = rowObj['soldTimestamp'] || '';
 
           let formattedDate = new Date().toISOString().split('T')[0];
           if (boughtTs.includes('/')) {
@@ -224,15 +237,12 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
             }
           }
 
-          const entryTimeVal = boughtTs.includes(' ') ? boughtTs.split(' ')[1] : '';
-          const exitTimeVal = soldTs.includes(' ') ? soldTs.split(' ')[1] : '';
-
           const sideVal = buyPrice < sellPrice ? 'LONG' : 'SHORT';
           const entryP = sideVal === 'LONG' ? buyPrice : sellPrice;
           const exitP = sideVal === 'LONG' ? sellPrice : buyPrice;
           const matchedOpt = SYMBOL_OPTIONS.find(opt => symbolStr.toUpperCase().includes(opt.value))?.value || 'MES';
 
-          await db.trades.add({
+          await cloudDb.addTrade({
             symbol: matchedOpt,
             openDate: formattedDate,
             side: sideVal,
@@ -253,10 +263,9 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
           importedCount++;
         }
 
-        setUploadSuccess(`Successfully imported ${importedCount} Tradovate trade(s) to "${selectedAccount.name}".`);
+        setUploadSuccess(`Successfully imported ${importedCount} Tradovate trade(s) to cloud for "${selectedAccount.name}".`);
       } 
       else if (selectedAccount.inputType === 'AMP') {
-        // Parse AMP Excel statement format
         const dataBuffer = await file.arrayBuffer();
         const workbook = XLSX.read(dataBuffer, { type: 'array' });
         const firstSheetName = workbook.SheetNames[0];
@@ -283,7 +292,6 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
         const priceIdx = headers.indexOf('Avg Fill P');
         const bsIdx = headers.indexOf('B/S');
         const qtyIdx = headers.indexOf('Qty');
-        const timeIdx = headers.indexOf('Fill T');
 
         let importedCount = 0;
         for (let r = headerRowIdx + 1; r < jsonData.length; r += 2) {
@@ -296,7 +304,6 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
           const p2 = parseFloat(String(row2[priceIdx])) || 0;
           const qVal = parseFloat(String(row1[qtyIdx])) || 1;
           const sideVal = String(row1[bsIdx]) === 'BUY' ? 'LONG' : 'SHORT';
-          const fillTime = String(row1[timeIdx] || '');
 
           const entryP = sideVal === 'LONG' ? Math.min(p1, p2) : Math.max(p1, p2);
           const exitP = sideVal === 'LONG' ? Math.max(p1, p2) : Math.min(p1, p2);
@@ -305,7 +312,7 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
           const netPnL = grossPnL - 2.50;
           const todayDate = new Date().toISOString().split('T')[0];
 
-          await db.trades.add({
+          await cloudDb.addTrade({
             symbol: specsObj.value,
             openDate: todayDate,
             side: sideVal,
@@ -326,7 +333,7 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
           importedCount++;
         }
 
-        setUploadSuccess(`Successfully imported ${Math.max(importedCount, 1)} AMP trade(s) to "${selectedAccount.name}".`);
+        setUploadSuccess(`Successfully imported ${Math.max(importedCount, 1)} AMP trade(s) to cloud for "${selectedAccount.name}".`);
       }
 
       setTimeout(() => {
@@ -349,7 +356,7 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
 
     const tradeStatus: 'WIN' | 'LOSS' | 'BE' = calcNetPnL > 0 ? 'WIN' : calcNetPnL < 0 ? 'LOSS' : 'BE';
 
-    await db.trades.add({
+    await cloudDb.addTrade({
       symbol,
       openDate: openDate || new Date().toISOString().split('T')[0],
       side,
@@ -387,6 +394,7 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
     await syncTagToMasterTables(selectedStrategy, selectedSetup, selectedMistake);
     resetForm();
     onClose();
+    window.location.reload();
   };
 
   const inputClass = "w-full border border-slate-200 bg-slate-50/50 rounded-xl p-2.5 text-xs text-[#ec3044] font-bold focus:outline-none focus:ring-2 focus:ring-[#ec3044] focus:bg-white transition";
@@ -404,7 +412,7 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
         {/* Header */}
         <div className="flex justify-between items-start mb-6 pb-4 border-b border-slate-100">
           <div>
-            <h2 className="text-lg font-bold text-slate-900">Log Trade & Automated Parameters</h2>
+            <h2 className="text-lg font-bold text-slate-900">Log Trade & Automated Parameters (Cloud Synced)</h2>
             <p className="text-xs text-slate-400">Computer handles metrics; user inputs Strategy, Rating, and Notes</p>
           </div>
 
@@ -464,7 +472,7 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
                 <option value="">-- Please create an account in the sidebar first --</option>
               ) : (
                 accounts.map(acc => (
-                  <option key={acc.id} value={acc.name}>
+                  <option key={acc.id || acc.name} value={acc.name}>
                     {acc.name} ({acc.groupName} - {acc.type} | Format: {acc.inputType})
                   </option>
                 ))
@@ -694,7 +702,7 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
               type="submit"
               className="px-6 py-2.5 bg-[#ec3044] hover:bg-[#d4283b] text-white font-bold rounded-xl shadow-md text-xs transition flex items-center gap-2 cursor-pointer"
             >
-              <Sparkles className="w-4 h-4" /> Save Trade
+              <Sparkles className="w-4 h-4" /> Save Trade to Cloud
             </button>
           </div>
 

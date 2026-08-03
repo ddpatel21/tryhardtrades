@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { cloudDb } from '@/lib/cloudDb';
 import { db } from '@/lib/db';
 import { 
   DollarSign, 
@@ -24,10 +24,25 @@ export default function DashboardPage() {
     name: string 
   }>({ type: 'global', name: 'All Accounts' });
 
-  const rawTrades = useLiveQuery(() => db.trades.toArray()) || [];
-  const accounts = useLiveQuery(() => db.accounts.toArray()) || [];
-  const strategies = useLiveQuery(() => db.strategies.toArray()) || [];
-  const mistakeTagsList = useLiveQuery(() => db.mistakeTags.toArray()) || [];
+  const [rawTrades, setRawTrades] = useState<any[]>([]);
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [strategies, setStrategies] = useState<any[]>([]);
+  const [mistakeTagsList, setMistakeTagsList] = useState<any[]>([]);
+
+  useEffect(() => {
+    async function loadData() {
+      const tradesData = await cloudDb.getTrades();
+      const accountsData = await cloudDb.getAccounts();
+      const strats = await db.strategies.toArray();
+      const mistakesList = await db.mistakes.toArray();
+
+      setRawTrades(tradesData);
+      setAccounts(accountsData);
+      setStrategies(strats);
+      setMistakeTagsList(mistakesList);
+    }
+    loadData();
+  }, []);
 
   // Listen to sidebar account filter changes
   useEffect(() => {
@@ -83,7 +98,7 @@ export default function DashboardPage() {
   // Mistake Impact Analytics
   const mistakeMap: Record<string, { count: number; totalCost: number }> = {};
   trades.forEach(t => {
-    if (t.mistakeTag && activeMistakes.has(t.mistakeTag)) {
+    if (t.mistakeTag) {
       if (!mistakeMap[t.mistakeTag]) {
         mistakeMap[t.mistakeTag] = { count: 0, totalCost: 0 };
       }
@@ -101,7 +116,7 @@ export default function DashboardPage() {
   // Strategy Performance Map for Report
   const strategyMap: Record<string, { count: number; pnl: number }> = {};
   trades.forEach(t => {
-    if (t.strategy && activeStrategies.has(t.strategy)) {
+    if (t.strategy) {
       if (!strategyMap[t.strategy]) strategyMap[t.strategy] = { count: 0, pnl: 0 };
       strategyMap[t.strategy].count += 1;
       strategyMap[t.strategy].pnl += (t.netPnL || 0);

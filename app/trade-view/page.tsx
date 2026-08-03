@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/lib/db';
+import { cloudDb } from '@/lib/cloudDb';
 import { 
   Filter, 
   Calendar, 
@@ -53,7 +53,31 @@ const INITIAL_COLUMNS: ColumnConfig[] = [
 export default function TradeViewPage() {
   const router = useRouter();
 
-  const [selectedTrades, setSelectedTrades] = useState<number[]>([]);
+  const [rawTrades, setRawTrades] = useState<any[]>([]);
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [savedStrategies, setSavedStrategies] = useState<any[]>([]);
+  const [savedSetups, setSavedSetups] = useState<any[]>([]);
+  const [savedMistakes, setSavedMistakes] = useState<any[]>([]);
+
+  const fetchCloudData = async () => {
+    const trades = await cloudDb.getTrades();
+    const accs = await cloudDb.getAccounts();
+    const strats = await db.strategies.toArray();
+    const setupsList = await db.setups.toArray();
+    const mistakesList = await db.mistakes.toArray();
+
+    setRawTrades(trades);
+    setAccounts(accs);
+    setSavedStrategies(strats);
+    setSavedSetups(setupsList);
+    setSavedMistakes(mistakesList);
+  };
+
+  useEffect(() => {
+    fetchCloudData();
+  }, []);
+
+  const [selectedTrades, setSelectedTrades] = useState<any[]>([]);
   const [showBulkMenu, setShowBulkMenu] = useState(false);
   const [isAddTradeOpen, setIsAddTradeOpen] = useState(false);
 
@@ -88,25 +112,17 @@ export default function TradeViewPage() {
   const [tagInputVal, setTagInputVal] = useState('');
 
   // Interactive inline cell editing
-  const [editingCellTradeId, setEditingCellTradeId] = useState<number | null>(null);
+  const [editingCellTradeId, setEditingCellTradeId] = useState<any | null>(null);
   const [editingCellType, setEditingCellType] = useState<'strategy' | 'setup' | 'mistake' | 'account' | null>(null);
 
   // Popup Modal State for creating new tag from table inline edit
   const [activeNewModalType, setActiveNewModalType] = useState<'strategy' | 'setup' | 'mistake' | null>(null);
   const [newModalInputVal, setNewModalInputVal] = useState('');
-  const [targetTradeIdForNewTag, setTargetTradeIdForNewTag] = useState<number | null>(null);
+  const [targetTradeIdForNewTag, setTargetTradeIdForNewTag] = useState<any | null>(null);
 
   // Right-Click Context Menu State
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; tradeId: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; tradeId: any } | null>(null);
   const [contextSubAction, setContextSubAction] = useState<'strategy' | 'setup' | 'mistake' | 'account' | null>(null);
-
-  const rawTrades = useLiveQuery(() => db.trades.toArray()) || [];
-  const accounts = useLiveQuery(() => db.accounts.toArray()) || [];
-  
-  // Strict master table queries for dropdown options
-  const savedStrategies = useLiveQuery(() => db.strategies.toArray()) || [];
-  const savedSetups = useLiveQuery(() => db.setups.toArray()) || [];
-  const savedMistakes = useLiveQuery(() => db.mistakes.toArray()) || [];
 
   // Listen to sidebar account filter changes
   useEffect(() => {
@@ -153,7 +169,6 @@ export default function TradeViewPage() {
 
   // 1. Filter Logic (Sidebar Account/Group Scope + Search & Attributes)
   const filteredTrades = rawTrades.filter((trade) => {
-    // Sidebar Account / Group Scope Filter
     if (activeFilterSelection.type === 'account') {
       if (trade.account !== activeFilterSelection.name) return false;
     } else if (activeFilterSelection.type === 'group') {
@@ -163,7 +178,6 @@ export default function TradeViewPage() {
       if (!trade.account || !groupAccounts.includes(trade.account)) return false;
     }
 
-    // Standard Filters
     if (filterSymbol.trim() && !trade.symbol.toLowerCase().includes(filterSymbol.toLowerCase().trim())) {
       return false;
     }
@@ -215,7 +229,7 @@ export default function TradeViewPage() {
     else setSelectedTrades(trades.map(t => t.id!).filter(Boolean));
   };
 
-  const toggleSelect = (id: number, e: React.MouseEvent) => {
+  const toggleSelect = (id: any, e: React.MouseEvent) => {
     e.stopPropagation();
     if (selectedTrades.includes(id)) setSelectedTrades(selectedTrades.filter(item => item !== id));
     else setSelectedTrades([...selectedTrades, id]);
@@ -224,13 +238,31 @@ export default function TradeViewPage() {
   const handleMassDelete = async () => {
     if (selectedTrades.length === 0) return;
     if (confirm(`Are you sure you want to delete ${selectedTrades.length} trade(s)?`)) {
-      await db.trades.bulkDelete(selectedTrades);
+      const { supabase } = await import('@/lib/supabase');
+      for (const id of selectedTrades) {
+        await supabase.from('trades').delete().eq('id', id);
+      }
       setSelectedTrades([]);
       setShowBulkMenu(false);
+      fetchCloudData();
     }
   };
 
-  const handleInlineCellChange = async (tradeId: number, field: 'strategy' | 'setupTag' | 'mistakeTag' | 'account', val: string) => {
+  const handleApplyMassTag = async () => {
+    if (!tagModalType || !tagInputVal.trim() || selectedTrades.length === 0) return;
+    const val = tagInputVal.trim();
+    const { supabase } = await import('@/lib/supabase');
+    for (const id of selectedTrades) {
+      const fieldKey = tagModalType === 'setup' ? 'setup_tag' : tagModalType === 'mistake' ? 'mistake_tag' : 'strategy';
+      await supabase.from('trades').update({ [fieldKey]: val }).eq('id', id);
+    }
+    setTagModalType(null);
+    setTagInputVal('');
+    setSelectedTrades([]);
+    fetchCloudData();
+  };
+
+  const handleInlineCellChange = async (tradeId: any, field: 'strategy' | 'setupTag' | 'mistakeTag' | 'account', val: string) => {
     if (val === '__NEW__') {
       setEditingCellTradeId(null);
       setEditingCellType(null);
@@ -240,43 +272,48 @@ export default function TradeViewPage() {
     }
 
     const finalVal = val === '__EMPTY__' ? '' : val;
+    const { supabase } = await import('@/lib/supabase');
 
     if (field === 'account') {
       const matchedAcc = accounts.find(a => a.name === finalVal);
-      await db.trades.update(tradeId, { 
-        account: finalVal || undefined,
-        accountGroup: matchedAcc ? matchedAcc.groupName : undefined
-      });
+      await supabase.from('trades').update({ 
+        account: finalVal || null,
+        account_group: matchedAcc ? matchedAcc.groupName : null
+      }).eq('id', tradeId);
     } else {
-      await db.trades.update(tradeId, { [field]: finalVal });
+      const dbField = field === 'setupTag' ? 'setup_tag' : field === 'mistakeTag' ? 'mistake_tag' : 'strategy';
+      await supabase.from('trades').update({ [dbField]: finalVal || null }).eq('id', tradeId);
     }
 
     setEditingCellTradeId(null);
     setEditingCellType(null);
+    fetchCloudData();
   };
 
   const handleCreateNewTagPopup = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newModalInputVal.trim() || !activeNewModalType || !targetTradeIdForNewTag) return;
     const name = newModalInputVal.trim();
+    const { supabase } = await import('@/lib/supabase');
 
     if (activeNewModalType === 'strategy') {
       const exists = await db.strategies.where('name').equals(name).first();
       if (!exists) await db.strategies.put({ name });
-      await db.trades.update(targetTradeIdForNewTag, { strategy: name });
+      await supabase.from('trades').update({ strategy: name }).eq('id', targetTradeIdForNewTag);
     } else if (activeNewModalType === 'setup') {
       const exists = await db.setups.where('name').equals(name).first();
       if (!exists) await db.setups.put({ name });
-      await db.trades.update(targetTradeIdForNewTag, { setupTag: name });
+      await supabase.from('trades').update({ setup_tag: name }).eq('id', targetTradeIdForNewTag);
     } else if (activeNewModalType === 'mistake') {
       const exists = await db.mistakes.where('name').equals(name).first();
       if (!exists) await db.mistakes.put({ name });
-      await db.trades.update(targetTradeIdForNewTag, { mistakeTag: name });
+      await supabase.from('trades').update({ mistake_tag: name }).eq('id', targetTradeIdForNewTag);
     }
 
     setActiveNewModalType(null);
     setNewModalInputVal('');
     setTargetTradeIdForNewTag(null);
+    fetchCloudData();
   };
 
   const resetFilters = () => {
@@ -357,7 +394,7 @@ export default function TradeViewPage() {
       {/* Top Filter Bar */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Trade View</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Trade View (Cloud Synced)</h1>
           {activeFilterSelection.type !== 'global' && (
             <p className="text-xs font-bold text-[#ec3044] mt-0.5">
               Scoped to {activeFilterSelection.type === 'group' ? 'Group:' : 'Account:'} {activeFilterSelection.name}
@@ -787,7 +824,7 @@ export default function TradeViewPage() {
                                     className="border border-[#ec3044] bg-white rounded p-1 text-xs text-[#ec3044] font-bold"
                                   >
                                     <option value="__EMPTY__">-- Unassigned --</option>
-                                    {accounts.map(a => <option key={a.id} value={a.name}>{a.name} ({a.groupName})</option>)}
+                                    {accounts.map(a => <option key={a.id || a.name} value={a.name}>{a.name} ({a.groupName})</option>)}
                                   </select>
                                 ) : (
                                   <span 
@@ -940,10 +977,12 @@ export default function TradeViewPage() {
             <div className="pl-4 pr-1 py-1 space-y-1 bg-slate-50 rounded-lg">
               {accounts.map(a => (
                 <div 
-                  key={a.id} 
+                  key={a.id || a.name} 
                   onClick={async () => { 
-                    await db.trades.update(contextMenu.tradeId, { account: a.name, accountGroup: a.groupName }); 
-                    setContextMenu(null); 
+                    const { supabase } = await import('@/lib/supabase');
+                    await supabase.from('trades').update({ account: a.name, account_group: a.groupName }).eq('id', contextMenu.tradeId);
+                    setContextMenu(null);
+                    fetchCloudData();
                   }}
                   className="p-1.5 hover:bg-slate-200/60 rounded cursor-pointer font-bold text-slate-700 truncate"
                 >
@@ -958,8 +997,10 @@ export default function TradeViewPage() {
           <button 
             onClick={async () => {
               if (confirm('Are you sure you want to delete this trade?')) {
-                await db.trades.delete(contextMenu.tradeId);
+                const { supabase } = await import('@/lib/supabase');
+                await supabase.from('trades').delete().eq('id', contextMenu.tradeId);
                 setContextMenu(null);
+                fetchCloudData();
               }
             }}
             className="flex items-center gap-2.5 w-full p-2 hover:bg-rose-50 text-rose-600 rounded-lg text-left font-bold cursor-pointer"
@@ -1055,7 +1096,7 @@ export default function TradeViewPage() {
       )}
 
       {/* Global Add Trade Modal */}
-      <AddTradeModal isOpen={isAddTradeOpen} onClose={() => setIsAddTradeOpen(false)} />
+      <AddTradeModal isOpen={isAddTradeOpen} onClose={() => { setIsAddTradeOpen(false); fetchCloudData(); }} />
 
     </div>
   );

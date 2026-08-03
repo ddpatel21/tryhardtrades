@@ -19,8 +19,8 @@ import {
   Trash2,
   Edit2
 } from 'lucide-react';
-import { db, TradingAccount } from '@/lib/db';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { cloudDb } from '@/lib/cloudDb';
+import { TradingAccount } from '@/lib/db';
 import AccountModal from '@/components/AccountModal';
 import AddTradeModal from '@/components/AddTradeModal';
 
@@ -30,7 +30,24 @@ interface SidebarLayoutProps {
 
 export default function Sidebar({ children }: SidebarLayoutProps) {
   const pathname = usePathname();
-  const accounts = useLiveQuery(() => db.accounts.toArray()) || [];
+  const [accounts, setAccounts] = useState<TradingAccount[]>([]);
+
+  useEffect(() => {
+    async function loadAccounts() {
+      const data = await cloudDb.getAccounts();
+      setAccounts(data);
+    }
+    loadAccounts();
+
+    // Listen for account updates/changes if any other component triggers it
+    const handleRefresh = () => loadAccounts();
+    window.addEventListener('account-filter-changed', handleRefresh);
+    window.addEventListener('open-add-account', handleRefresh); // can refetch on changes
+    return () => {
+      window.removeEventListener('account-filter-changed', handleRefresh);
+      window.removeEventListener('open-add-account', handleRefresh);
+    };
+  }, []);
 
   const [selectedAccount, setSelectedAccount] = useState<string>('All Accounts');
   const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
@@ -55,10 +72,13 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isAccountManagerOpen]);
 
-  const handleDeleteAccount = async (id?: number) => {
+  const handleDeleteAccount = async (id?: number | string) => {
     if (!id) return;
     if (confirm('Are you sure you want to delete this account?')) {
-      await db.accounts.delete(id);
+      const { supabase } = await import('@/lib/supabase');
+      await supabase.from('accounts').delete().eq('id', id);
+      const data = await cloudDb.getAccounts();
+      setAccounts(data);
     }
   };
 
@@ -66,15 +86,19 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
     e.preventDefault();
     if (!editingAccount || !editingAccount.id) return;
 
-    await db.accounts.update(editingAccount.id, {
+    const { supabase } = await import('@/lib/supabase');
+    await supabase.from('accounts').update({
       name: editingAccount.name,
-      groupName: editingAccount.groupName,
+      group_name: editingAccount.groupName,
       type: editingAccount.type,
       firm: editingAccount.firm,
       balance: editingAccount.balance,
-      inputType: editingAccount.inputType || 'Tradovate',
-    });
+      input_type: editingAccount.inputType || 'Tradovate',
+    }).eq('id', editingAccount.id);
+
     setEditingAccount(null);
+    const data = await cloudDb.getAccounts();
+    setAccounts(data);
   };
 
   // Group accounts by their groupName
@@ -291,7 +315,7 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
             <span>Playbook Active</span>
           </div>
           <p className="text-[10px] text-slate-400 leading-tight">
-            IndexedDB rules synced locally
+            Supabase Cloud Sync Active
           </p>
         </div>
 

@@ -1,13 +1,21 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/lib/db';
+import { cloudDb } from '@/lib/cloudDb';
+import { TradingAccount } from '@/lib/db';
 import { Layers, ChevronDown, Check } from 'lucide-react';
 
 export default function AccountFilterDropdown() {
-  const accounts = useLiveQuery(() => db.accounts.toArray()) || [];
+  const [accounts, setAccounts] = useState<TradingAccount[]>([]);
   const [isOpen, setIsOpen] = useState(false);
+
+  useEffect(() => {
+    async function loadAccounts() {
+      const data = await cloudDb.getAccounts();
+      setAccounts(data);
+    }
+    loadAccounts();
+  }, []);
 
   // Group accounts by groupName
   const groupMap: Record<string, typeof accounts> = {};

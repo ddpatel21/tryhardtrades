@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { cloudDb } from '@/lib/cloudDb';
 import { db } from '@/lib/db';
 import { 
   Calendar as CalendarIcon, 
@@ -31,6 +31,31 @@ export default function DayViewPage() {
   const [selectedDateStr, setSelectedDateStr] = useState<string>('2026-07-10');
   const [isAddTradeOpen, setIsAddTradeOpen] = useState(false);
 
+  // Cloud state variables
+  const [rawTrades, setRawTrades] = useState<any[]>([]);
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [savedJournal, setSavedJournal] = useState<any | null>(null);
+
+  const fetchCloudData = async () => {
+    const trades = await cloudDb.getTrades();
+    const accs = await cloudDb.getAccounts();
+    setRawTrades(trades);
+    setAccounts(accs);
+  };
+
+  useEffect(() => {
+    fetchCloudData();
+  }, []);
+
+  // Fetch journal note from Dexie when selectedDateStr changes
+  useEffect(() => {
+    async function fetchJournal() {
+      const entry = await db.dailyJournals.where('date').equals(selectedDateStr).first();
+      setSavedJournal(entry || null);
+    }
+    fetchJournal();
+  }, [selectedDateStr]);
+
   // Calendar Customization States
   const [showWeekends, setShowWeekends] = useState(false); // Default weekdays only
 
@@ -57,18 +82,6 @@ export default function DayViewPage() {
   // Journal Note Editing State
   const [isEditingJournal, setIsEditingJournal] = useState(false);
   const [journalNoteInput, setJournalNoteInput] = useState('');
-
-  // Fetch Raw Trades, Accounts, and Journal Entry for Selected Date from Dexie
-  const rawTrades = useLiveQuery(() => db.trades.toArray()) || [];
-  const accounts = useLiveQuery(() => db.accounts.toArray()) || [];
-  
-  const savedJournal = useLiveQuery(
-    async () => {
-      const entry = await db.dailyJournals.where('date').equals(selectedDateStr).first();
-      return entry || null;
-    },
-    [selectedDateStr]
-  );
 
   // Listen to sidebar account filter changes
   useEffect(() => {
@@ -120,6 +133,8 @@ export default function DayViewPage() {
       });
     }
 
+    const entry = await db.dailyJournals.where('date').equals(selectedDateStr).first();
+    setSavedJournal(entry || null);
     setIsEditingJournal(false);
   };
 
@@ -647,7 +662,7 @@ export default function DayViewPage() {
       </div>
 
       {/* Global Add Trade Modal */}
-      <AddTradeModal isOpen={isAddTradeOpen} onClose={() => setIsAddTradeOpen(false)} />
+      <AddTradeModal isOpen={isAddTradeOpen} onClose={() => { setIsAddTradeOpen(false); fetchCloudData(); }} />
 
     </div>
   );

@@ -2,12 +2,22 @@
 
 import React, { useState, useEffect } from 'react';
 import { db } from '@/lib/db';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { cloudDb } from '@/lib/cloudDb';
 import { X, Wallet, Trash2 } from 'lucide-react';
 
 export default function AccountModal() {
   const [isOpen, setIsOpen] = useState(false);
-  const accounts = useLiveQuery(() => db.accounts.toArray()) || [];
+  const [accounts, setAccounts] = useState<any[]>([]);
+
+  // Fetch accounts from cloud
+  const fetchCloudAccounts = async () => {
+    const accs = await cloudDb.getAccounts();
+    setAccounts(accs);
+  };
+
+  useEffect(() => {
+    fetchCloudAccounts();
+  }, [isOpen]);
 
   const existingGroups = Array.from(new Set(accounts.map(a => a.groupName).filter(Boolean)));
 
@@ -23,6 +33,7 @@ export default function AccountModal() {
 
   useEffect(() => {
     const handleOpen = () => {
+      fetchCloudAccounts();
       setIsOpen(true);
       setName('');
       setGroupName(existingGroups[0] || '');
@@ -44,7 +55,7 @@ export default function AccountModal() {
     const targetGroup = isCreatingNewGroup ? newGroupNameInput.trim() : groupName;
     if (!name.trim() || !targetGroup || !type) return;
 
-    await db.accounts.add({
+    await cloudDb.addAccount({
       name: name.trim(),
       groupName: targetGroup,
       type,
@@ -55,17 +66,22 @@ export default function AccountModal() {
 
     setIsOpen(false);
     window.dispatchEvent(new CustomEvent('account-list-updated'));
+    window.location.reload();
   };
 
   const handleDeleteGroup = async (groupToDelete: string) => {
     if (confirm(`Are you sure you want to delete group "${groupToDelete}" and all its accounts?`)) {
       const accountsToDelete = accounts.filter(a => a.groupName === groupToDelete);
       for (const acc of accountsToDelete) {
-        if (acc.id) await db.accounts.delete(acc.id);
+        if (acc.id) {
+          // If you have a cloud account delete function, or fallback to local db
+          await db.accounts.delete(acc.id);
+        }
       }
       if (groupName === groupToDelete) {
         setGroupName('');
       }
+      fetchCloudAccounts();
     }
   };
 
@@ -78,7 +94,7 @@ export default function AccountModal() {
             <div className="w-7 h-7 bg-[#ec3044]/10 rounded-lg flex items-center justify-center text-[#ec3044]">
               <Wallet className="w-4 h-4" />
             </div>
-            <h2 className="text-base font-bold text-slate-900">Create New Account</h2>
+            <h2 className="text-base font-bold text-slate-900">Create New Account (Cloud)</h2>
           </div>
           <button onClick={() => setIsOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
             <X className="w-5 h-5" />
@@ -222,7 +238,7 @@ export default function AccountModal() {
               type="submit" 
               className="bg-[#ec3044] hover:bg-[#d4283b] text-white font-bold px-6 py-2 rounded-xl text-xs shadow-sm transition cursor-pointer"
             >
-              Create Account
+              Create Cloud Account
             </button>
           </div>
 
