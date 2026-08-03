@@ -128,41 +128,44 @@ export default function DashboardPage() {
     .sort((a, b) => new Date(`${b.openDate} ${b.entryTime || '00:00'}`).getTime() - new Date(`${a.openDate} ${a.entryTime || '00:00'}`).getTime())
     .slice(0, 5);
 
-  // Robust Session Breakdown mapping with support for AM/PM strings or 24-hour time formats
+  // Market Session Breakdown (Central Time - CME RTH: 8:30 AM to 3:00 PM CT)
   const sessionMap: Record<string, { count: number; pnl: number }> = {
     'RTH AM': { count: 0, pnl: 0 },
     'RTH PM': { count: 0, pnl: 0 },
-    'Overnight / Pre-Market': { count: 0, pnl: 0 }
+    'Globex': { count: 0, pnl: 0 }
   };
 
   trades.forEach(t => {
-    const timeStr = (t.entryTime || t.entry_time || '09:30').toString().replace(/\u202f/g, ' ').trim();
-    let timeDecimal = 9.5;
+    const timeStr = (t.entryTime || t.entry_time || '08:30').toString().replace(/\u202f/g, ' ').trim();
+    let timeDecimal = 8.5;
 
     if (timeStr.includes('AM') || timeStr.includes('PM')) {
       const [timePart, modifier] = timeStr.split(' ');
       const [hStr, mStr] = timePart.split(':');
-      let h = parseInt(hStr || '9', 10);
+      let h = parseInt(hStr || '8', 10);
       const m = parseInt(mStr || '30', 10);
       if (modifier === 'PM' && h < 12) h += 12;
       if (modifier === 'AM' && h === 12) h = 0;
       timeDecimal = h + m / 60;
     } else {
       const [hStr, mStr] = timeStr.split(':');
-      const h = parseInt(hStr || '9', 10);
+      const h = parseInt(hStr || '8', 10);
       const m = parseInt(mStr || '30', 10);
       timeDecimal = h + m / 60;
     }
 
-    if (timeDecimal >= 9.5 && timeDecimal < 12.0) {
+    // RTH AM: 08:30 AM (8.5) to 12:00 PM (12.0) Central Time
+    // RTH PM: 12:00 PM (12.0) to 03:00 PM (15.0) Central Time
+    // Globex: Outside 8:30 AM - 3:00 PM CT
+    if (timeDecimal >= 8.5 && timeDecimal < 12.0) {
       sessionMap['RTH AM'].count += 1;
       sessionMap['RTH AM'].pnl += (t.netPnL || 0);
-    } else if (timeDecimal >= 12.0 && timeDecimal <= 16.0) {
+    } else if (timeDecimal >= 12.0 && timeDecimal <= 15.0) {
       sessionMap['RTH PM'].count += 1;
       sessionMap['RTH PM'].pnl += (t.netPnL || 0);
     } else {
-      sessionMap['Overnight / Pre-Market'].count += 1;
-      sessionMap['Overnight / Pre-Market'].pnl += (t.netPnL || 0);
+      sessionMap['Globex'].count += 1;
+      sessionMap['Globex'].pnl += (t.netPnL || 0);
     }
   });
 
