@@ -32,6 +32,22 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
   const pathname = usePathname();
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
 
+  // Font Size Scaling State with LocalStorage Persistence
+  const [fontSizeScale, setFontSizeScale] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('tryhard_font_scale');
+      return saved ? parseFloat(saved) : 100;
+    }
+    return 100;
+  });
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('tryhard_font_scale', fontSizeScale.toString());
+      document.documentElement.style.fontSize = `${fontSizeScale}%`;
+    }
+  }, [fontSizeScale]);
+
   useEffect(() => {
     async function loadAccounts() {
       const data = await cloudDb.getAccounts();
@@ -308,15 +324,35 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
 
         </div>
 
-        {/* Footer Playbook Status Badge */}
-        <div className="p-3 bg-slate-50 border border-slate-200/60 rounded-xl space-y-1.5">
-          <div className="flex items-center gap-2 text-[11px] font-bold text-slate-700">
-            <ShieldCheck className="w-4 h-4 text-[#10b981]" />
-            <span>Playbook Active</span>
+        {/* Footer: Font Size Slider & Playbook Status Badge */}
+        <div className="space-y-3">
+          {/* Global Font Size Slider */}
+          <div className="p-3 bg-slate-50 border border-slate-200/60 rounded-xl space-y-1.5">
+            <div className="flex justify-between items-center text-[11px] font-bold text-slate-700">
+              <span>Font Size</span>
+              <span className="text-[#ec3044] font-mono">{fontSizeScale}%</span>
+            </div>
+            <input 
+              type="range" 
+              min="85" 
+              max="130" 
+              step="5"
+              value={fontSizeScale}
+              onChange={(e) => setFontSizeScale(parseFloat(e.target.value))}
+              className="w-full accent-[#ec3044] cursor-pointer"
+            />
           </div>
-          <p className="text-[10px] text-slate-400 leading-tight">
-            Supabase Cloud Sync Active
-          </p>
+
+          {/* Playbook Status Badge */}
+          <div className="p-3 bg-slate-50 border border-slate-200/60 rounded-xl space-y-1.5">
+            <div className="flex items-center gap-2 text-[11px] font-bold text-slate-700">
+              <ShieldCheck className="w-4 h-4 text-[#10b981]" />
+              <span>Playbook Active</span>
+            </div>
+            <p className="text-[10px] text-slate-400 leading-tight">
+              Supabase Cloud Sync Active
+            </p>
+          </div>
         </div>
 
       </aside>
@@ -447,7 +483,7 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
               ) : (
                 <button 
                   onClick={() => window.dispatchEvent(new CustomEvent('open-add-account'))}
-                  className="w-full py-3 bg-[#ec3044]/10 hover:bg-[#ec3044]/20 text-[#ec3044] font-bold rounded-xl text-xs transition flex items-center justify-center gap-2 cursor-pointer border border-[#ec3044]/20 shadow-sm"
+                  className="w-full py-3 bg-[#ec3044]/15 hover:bg-[#ec3044]/25 text-[#ec3044] font-bold rounded-xl text-xs transition flex items-center justify-center gap-2 cursor-pointer border border-[#ec3044]/25 shadow-sm"
                 >
                   <UserPlus className="w-4 h-4" /> + Create New Account
                 </button>
