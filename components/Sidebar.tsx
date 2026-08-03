@@ -32,21 +32,21 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
   const pathname = usePathname();
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
 
-  // Font Size Scaling State with LocalStorage Persistence
-  const [fontSizeScale, setFontSizeScale] = useState(() => {
+  // Pixel-based Font Size State with LocalStorage Persistence (default 14px)
+  const [fontSizePx, setFontSizePx] = useState(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('tryhard_font_scale');
-      return saved ? parseFloat(saved) : 100;
+      const saved = localStorage.getItem('tryhard_font_px');
+      return saved ? parseInt(saved, 10) : 14;
     }
-    return 100;
+    return 14;
   });
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      localStorage.setItem('tryhard_font_scale', fontSizeScale.toString());
-      document.documentElement.style.fontSize = `${fontSizeScale}%`;
+      localStorage.setItem('tryhard_font_px', fontSizePx.toString());
+      document.documentElement.style.fontSize = `${fontSizePx}px`;
     }
-  }, [fontSizeScale]);
+  }, [fontSizePx]);
 
   useEffect(() => {
     async function loadAccounts() {
@@ -55,10 +55,9 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
     }
     loadAccounts();
 
-    // Listen for account updates/changes if any other component triggers it
     const handleRefresh = () => loadAccounts();
     window.addEventListener('account-filter-changed', handleRefresh);
-    window.addEventListener('open-add-account', handleRefresh); // can refetch on changes
+    window.addEventListener('open-add-account', handleRefresh);
     return () => {
       window.removeEventListener('account-filter-changed', handleRefresh);
       window.removeEventListener('open-add-account', handleRefresh);
@@ -70,13 +69,9 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
   const [isAddTradeOpen, setIsAddTradeOpen] = useState<boolean>(false);
   const [isAccountManagerOpen, setIsAccountManagerOpen] = useState<boolean>(false);
 
-  // Track which groups are expanded (folded/closed by default)
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
-
-  // Edit Account State in Manager Drawer
   const [editingAccount, setEditingAccount] = useState<TradingAccount | null>(null);
 
-  // Close Account Manager on ESC key press
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isAccountManagerOpen) {
@@ -117,7 +112,6 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
     setAccounts(data);
   };
 
-  // Group accounts by their groupName
   const groupedAccounts: Record<string, typeof accounts> = {};
   accounts.forEach(acc => {
     const g = acc.groupName || 'Default Group';
@@ -205,7 +199,6 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
 
                     return (
                       <div key={groupName} className="py-1 border-t border-slate-100">
-                        {/* Group Header (Accordion Toggle & Select Group) */}
                         <div className={`flex items-center justify-between px-3 py-2 bg-slate-50 hover:bg-slate-100 transition ${
                           selectedAccount === `Group: ${groupName}` ? 'bg-[#ec3044]/10 text-[#ec3044]' : 'text-slate-800'
                         }`}>
@@ -230,7 +223,6 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
                           </button>
                         </div>
 
-                        {/* Collapsible Nested Accounts (Folded by default) */}
                         {isExpanded && (
                           <div className="pl-4 pr-2 py-1 space-y-1 bg-white">
                             {groupAccs.map((acc) => (
@@ -324,26 +316,24 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
 
         </div>
 
-        {/* Footer: Font Size Slider & Playbook Status Badge */}
+        {/* Footer: Pixel-based Font Size Slider & Playbook Status Badge */}
         <div className="space-y-3">
-          {/* Global Font Size Slider */}
           <div className="p-3 bg-slate-50 border border-slate-200/60 rounded-xl space-y-1.5">
             <div className="flex justify-between items-center text-[11px] font-bold text-slate-700">
               <span>Font Size</span>
-              <span className="text-[#ec3044] font-mono">{fontSizeScale}%</span>
+              <span className="text-[#ec3044] font-mono">{fontSizePx}px</span>
             </div>
             <input 
               type="range" 
-              min="85" 
-              max="130" 
-              step="5"
-              value={fontSizeScale}
-              onChange={(e) => setFontSizeScale(parseFloat(e.target.value))}
+              min="12" 
+              max="20" 
+              step="1"
+              value={fontSizePx}
+              onChange={(e) => setFontSizePx(parseInt(e.target.value, 10))}
               className="w-full accent-[#ec3044] cursor-pointer"
             />
           </div>
 
-          {/* Playbook Status Badge */}
           <div className="p-3 bg-slate-50 border border-slate-200/60 rounded-xl space-y-1.5">
             <div className="flex items-center gap-2 text-[11px] font-bold text-slate-700">
               <ShieldCheck className="w-4 h-4 text-[#10b981]" />
@@ -440,7 +430,6 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
                     </div>
                   </div>
 
-                  {/* Statement Data Input Type Selector in Edit Form */}
                   <div>
                     <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Data Input Type (Statement Format)</label>
                     <select 
@@ -489,7 +478,6 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
                 </button>
               )}
 
-              {/* Grouped Account List with #EC3044 separators */}
               <div className="space-y-6 pt-2">
                 <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Existing Accounts</h3>
                 
@@ -498,8 +486,6 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
                 ) : (
                   Object.entries(groupedAccounts).map(([groupName, groupAccs], groupIdx) => (
                     <div key={groupName} className="space-y-3">
-                      
-                      {/* Red Separator Line with Group Title */}
                       {groupIdx > 0 && <hr className="border-t-2 border-[#ec3044] my-4" />}
                       
                       <div className="flex items-center justify-between">
@@ -571,7 +557,6 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
         </div>
       )}
 
-      {/* Modals */}
       <AccountModal />
       <AddTradeModal isOpen={isAddTradeOpen} onClose={() => setIsAddTradeOpen(false)} />
 
