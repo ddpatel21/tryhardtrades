@@ -128,25 +128,41 @@ export default function DashboardPage() {
     .sort((a, b) => new Date(`${b.openDate} ${b.entryTime || '00:00'}`).getTime() - new Date(`${a.openDate} ${a.entryTime || '00:00'}`).getTime())
     .slice(0, 5);
 
-  // Market Session Breakdown: RTH AM (09:30 - 11:00), RTH PM (13:00 - 16:00)
+  // Robust Session Breakdown mapping with support for AM/PM strings or 24-hour time formats
   const sessionMap: Record<string, { count: number; pnl: number }> = {
     'RTH AM': { count: 0, pnl: 0 },
-    'RTH PM': { count: 0, pnl: 0 }
+    'RTH PM': { count: 0, pnl: 0 },
+    'Overnight / Pre-Market': { count: 0, pnl: 0 }
   };
 
   trades.forEach(t => {
-    const timeStr = t.entryTime || '09:30';
-    const [hStr, mStr] = timeStr.split(':');
-    const hour = parseInt(hStr || '9', 10);
-    const minute = parseInt(mStr || '30', 10);
-    const timeDecimal = hour + minute / 60;
+    const timeStr = (t.entryTime || t.entry_time || '09:30').toString().replace(/\u202f/g, ' ').trim();
+    let timeDecimal = 9.5;
 
-    if (timeDecimal >= 9.5 && timeDecimal <= 11.0) {
+    if (timeStr.includes('AM') || timeStr.includes('PM')) {
+      const [timePart, modifier] = timeStr.split(' ');
+      const [hStr, mStr] = timePart.split(':');
+      let h = parseInt(hStr || '9', 10);
+      const m = parseInt(mStr || '30', 10);
+      if (modifier === 'PM' && h < 12) h += 12;
+      if (modifier === 'AM' && h === 12) h = 0;
+      timeDecimal = h + m / 60;
+    } else {
+      const [hStr, mStr] = timeStr.split(':');
+      const h = parseInt(hStr || '9', 10);
+      const m = parseInt(mStr || '30', 10);
+      timeDecimal = h + m / 60;
+    }
+
+    if (timeDecimal >= 9.5 && timeDecimal < 12.0) {
       sessionMap['RTH AM'].count += 1;
       sessionMap['RTH AM'].pnl += (t.netPnL || 0);
-    } else if (timeDecimal >= 13.0 && timeDecimal <= 16.0) {
+    } else if (timeDecimal >= 12.0 && timeDecimal <= 16.0) {
       sessionMap['RTH PM'].count += 1;
       sessionMap['RTH PM'].pnl += (t.netPnL || 0);
+    } else {
+      sessionMap['Overnight / Pre-Market'].count += 1;
+      sessionMap['Overnight / Pre-Market'].pnl += (t.netPnL || 0);
     }
   });
 
@@ -398,7 +414,7 @@ export default function DashboardPage() {
           <div className="space-y-3">
             {Object.entries(sessionMap).map(([sessionName, data]) => (
               <div key={sessionName} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl text-xs">
-                <span className="font-bold text-slate-900">{sessionName} ({data.count} trades)</span>
+                <span className="font-bold text-slate-900">{sessionName} ({data.count} {data.count === 1 ? 'trade' : 'trades'})</span>
                 <span className={`font-mono font-bold ${data.pnl >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>${data.pnl.toFixed(2)}</span>
               </div>
             ))}
