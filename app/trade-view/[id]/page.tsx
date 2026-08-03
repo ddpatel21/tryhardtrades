@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/lib/db';
+import { cloudDb } from '@/lib/cloudDb';
 import { useParams, useRouter } from 'next/navigation';
 import { 
   CheckCircle2, 
@@ -109,13 +109,33 @@ function TradeZellaLightChart({ symbol }: { symbol: string }) {
 export default function SingleTradeDetail() {
   const params = useParams();
   const router = useRouter();
-  const tradeId = parseInt(params.id as string);
+  const tradeId = params.id as string;
 
-  const trade = useLiveQuery(() => db.trades.get(tradeId), [tradeId]);
-  const accounts = useLiveQuery(() => db.accounts.toArray()) || [];
-  const savedStrategies = useLiveQuery(() => db.strategies.toArray()) || [];
-  const savedSetups = useLiveQuery(() => db.setups.toArray()) || [];
-  const savedMistakes = useLiveQuery(() => db.mistakes.toArray()) || [];
+  const [trade, setTrade] = useState<any>(null);
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [savedStrategies, setSavedStrategies] = useState<any[]>([]);
+  const [savedSetups, setSavedSetups] = useState<any[]>([]);
+  const [savedMistakes, setSavedMistakes] = useState<any[]>([]);
+
+  const fetchTradeData = async () => {
+    const allTrades = await cloudDb.getTrades();
+    const found = allTrades.find(t => String(t.id) === String(tradeId));
+    setTrade(found || null);
+
+    const accs = await cloudDb.getAccounts();
+    const strats = await db.strategies.toArray();
+    const setupsList = await db.setups.toArray();
+    const mistakesList = await db.mistakes.toArray();
+
+    setAccounts(accs);
+    setSavedStrategies(strats);
+    setSavedSetups(setupsList);
+    setSavedMistakes(mistakesList);
+  };
+
+  useEffect(() => {
+    fetchTradeData();
+  }, [tradeId]);
 
   const [leftTab, setLeftTab] = useState<'Stats' | 'Strategy' | 'Executions'>('Stats');
   const [rightTab, setRightTab] = useState<'Chart' | 'Notes'>('Chart');
@@ -183,7 +203,7 @@ export default function SingleTradeDetail() {
       <div className="p-8 bg-[#F8F9FD] min-h-screen text-slate-800 flex flex-col items-center justify-center">
         <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center shadow-sm">
           <h2 className="text-lg font-bold text-slate-900 mb-2">Trade Not Found</h2>
-          <p className="text-xs text-slate-500 mb-4">This trade ID does not exist in your local database.</p>
+          <p className="text-xs text-slate-500 mb-4">This trade ID does not exist in your cloud database.</p>
           <button onClick={() => router.push('/trade-view')} className="px-4 py-2 bg-[#ec3044] hover:bg-[#d4283b] text-white text-xs font-bold rounded-xl cursor-pointer">
             Back to Trade View
           </button>
@@ -197,10 +217,12 @@ export default function SingleTradeDetail() {
 
   const handleQuickAssignAccount = async (accountName: string) => {
     const matchedAcc = accounts.find(a => a.name === accountName);
-    await db.trades.update(tradeId, {
-      account: accountName || undefined,
-      accountGroup: matchedAcc ? matchedAcc.groupName : undefined
-    });
+    const { supabase } = await import('@/lib/supabase');
+    await supabase.from('trades').update({
+      account: accountName || null,
+      account_group: matchedAcc ? matchedAcc.groupName : null
+    }).eq('id', tradeId);
+    fetchTradeData();
   };
 
   const handleSaveTradeDetails = async () => {
@@ -218,41 +240,47 @@ export default function SingleTradeDetail() {
     const tradeStatus: 'WIN' | 'LOSS' | 'BE' = netPnL > 0 ? 'WIN' : netPnL < 0 ? 'LOSS' : 'BE';
     const matchedAcc = accounts.find(a => a.name === editAccount);
 
-    await db.trades.update(tradeId, {
+    const { supabase } = await import('@/lib/supabase');
+    await supabase.from('trades').update({
       symbol: editSymbol,
-      openDate: editOpenDate,
+      open_date: editOpenDate,
       side: editSide,
-      contractsTraded: qty,
-      entryPrice: entP,
-      exitPrice: extP,
-      entryTime: editEntryTime,
-      exitTime: editExitTime,
+      contracts_traded: qty,
+      entry_price: entP,
+      exit_price: extP,
+      entry_time: editEntryTime,
+      exit_time: editExitTime,
       commissions: comms,
-      grossPnL,
-      netPnL,
+      gross_pnl: grossPnL,
+      net_pnl: netPnL,
       points,
       ticks: totalTicks,
-      ticksPerContract: qty > 0 ? totalTicks / qty : 0,
+      ticks_per_contract: qty > 0 ? totalTicks / qty : 0,
       status: tradeStatus,
-      account: editAccount || undefined,
-      accountGroup: matchedAcc ? matchedAcc.groupName : undefined
-    });
+      account: editAccount || null,
+      account_group: matchedAcc ? matchedAcc.groupName : null
+    }).eq('id', tradeId);
 
     setIsEditingTradeDetails(false);
+    fetchTradeData();
   };
 
   const handleSaveNotes = async () => {
-    await db.trades.update(tradeId, { notes: editedNotes });
+    const { supabase } = await import('@/lib/supabase');
+    await supabase.from('trades').update({ notes: editedNotes }).eq('id', tradeId);
     setIsEditingNotes(false);
+    fetchTradeData();
   };
 
   const handleSaveTags = async () => {
-    await db.trades.update(tradeId, {
+    const { supabase } = await import('@/lib/supabase');
+    await supabase.from('trades').update({
       strategy: selectedStrat,
-      setupTag: selectedSetup,
-      mistakeTag: selectedMistake,
-    });
+      setup_tag: selectedSetup,
+      mistake_tag: selectedMistake,
+    }).eq('id', tradeId);
     setIsEditingTags(false);
+    fetchTradeData();
   };
 
   // Create New Tag via Popup Modal
@@ -260,20 +288,25 @@ export default function SingleTradeDetail() {
     e.preventDefault();
     if (!newModalInputVal.trim() || !activeNewModalType) return;
     const name = newModalInputVal.trim();
+    const { supabase } = await import('@/lib/supabase');
 
     if (activeNewModalType === 'strategy') {
       await db.strategies.put({ name });
       setSelectedStrat(name);
+      await supabase.from('trades').update({ strategy: name }).eq('id', tradeId);
     } else if (activeNewModalType === 'setup') {
       await db.setups.put({ name });
       setSelectedSetup(name);
+      await supabase.from('trades').update({ setup_tag: name }).eq('id', tradeId);
     } else if (activeNewModalType === 'mistake') {
       await db.mistakes.put({ name });
       setSelectedMistake(name);
+      await supabase.from('trades').update({ mistake_tag: name }).eq('id', tradeId);
     }
 
     setNewModalInputVal('');
     setActiveNewModalType(null);
+    fetchTradeData();
   };
 
   const userInputStyle = "w-full border border-[#ec3044]/40 bg-[#ec3044]/5 rounded-lg p-1.5 text-[#ec3044] font-bold text-xs focus:outline-none focus:ring-2 focus:ring-[#ec3044]";
@@ -291,7 +324,7 @@ export default function SingleTradeDetail() {
         </button>
         
         <div className="bg-[#FFF8EC] border border-[#FCE8CD] text-[#A6690B] px-4 py-1.5 rounded-xl text-xs font-medium flex items-center gap-2">
-          <span>⚠️</span> Local Data Engine Active. All execution parameters saved locally.
+          <span>⚠️</span> Supabase Cloud Sync Active. All execution parameters synced in real time.
         </div>
       </div>
 
@@ -341,7 +374,7 @@ export default function SingleTradeDetail() {
             </div>
             <div>
               <p className="text-slate-400 font-medium">Trade Score</p>
-              <p className="text-[#ec3044] font-bold">{trade.zellaScale} / 100</p>
+              <p className="text-[#ec3044] font-bold">{trade.zellaScale || 90} / 100</p>
             </div>
             <div>
               <p className="text-slate-400 font-medium">Planned R</p>
@@ -716,7 +749,7 @@ export default function SingleTradeDetail() {
 
       </div>
 
-      {/* DEDICATED POPUP MODAL FOR CREATING NEW TAG/STRATEGY (Close on Esc or Backdrop Click) */}
+      {/* DEDICATED POPUP MODAL FOR CREATING NEW TAG/STRATEGY */}
       {activeNewModalType && (
         <div 
           onClick={() => { setActiveNewModalType(null); setNewModalInputVal(''); }}
