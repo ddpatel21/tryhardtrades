@@ -26,9 +26,16 @@ export default function DayViewPage() {
     name: string 
   }>({ type: 'global', name: 'All Accounts' });
 
-  // Navigation State for Calendar Month/Year
-  const [currentDate, setCurrentDate] = useState(new Date(2026, 6, 1)); // Default July 2026
-  const [selectedDateStr, setSelectedDateStr] = useState<string>('2026-07-10');
+  // Navigation State for Calendar Month/Year defaulting to current date (August 2026)
+  const [currentDate, setCurrentDate] = useState(() => new Date());
+  const [selectedDateStr, setSelectedDateStr] = useState<string>(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  });
+
   const [isAddTradeOpen, setIsAddTradeOpen] = useState(false);
 
   // Cloud state variables
