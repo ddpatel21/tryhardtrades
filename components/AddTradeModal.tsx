@@ -270,16 +270,16 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
         const workbook = XLSX.read(dataBuffer, { type: 'array' });
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
-        const jsonData = XLSX.utils.sheet_to_json<string[]>(worksheet, { header: 1 });
+        const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
 
         let headerRowIdx = -1;
         let headers: string[] = [];
 
         for (let r = 0; r < jsonData.length; r++) {
           const row = jsonData[r];
-          if (row.some(cell => String(cell).includes('Symbol') && String(cell).includes('Avg Fill P'))) {
+          if (row && row.some((cell: any) => String(cell).includes('Symbol')) && row.some((cell: any) => String(cell).includes('Avg Fill P'))) {
             headerRowIdx = r;
-            headers = row.map(c => String(c).trim());
+            headers = row.map((c: any) => String(c).trim());
             break;
           }
         }
@@ -297,7 +297,7 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
         for (let r = headerRowIdx + 1; r < jsonData.length; r += 2) {
           const row1 = jsonData[r];
           const row2 = jsonData[r + 1];
-          if (!row1 || !row2) break;
+          if (!row1 || !row2 || !row1[symIdx]) break;
 
           const symbolStr = String(row1[symIdx] || 'MES');
           const p1 = parseFloat(String(row1[priceIdx])) || 0;
