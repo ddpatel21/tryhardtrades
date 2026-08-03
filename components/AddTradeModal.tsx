@@ -216,15 +216,34 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
           const netPnL = parseFloat(rawPnL) || 0;
 
           const boughtTs = rowObj['boughtTimestamp'] || '';
+          const soldTs = rowObj['soldTimestamp'] || '';
+
           let formattedDate = new Date().toISOString().split('T')[0];
-          if (boughtTs.includes('/')) {
-            const parts = boughtTs.split(' ')[0].split('/');
-            if (parts.length === 3) {
-              formattedDate = `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
+          let entryTimeStr = '';
+          let exitTimeStr = '';
+
+          const sideVal = buyPrice < sellPrice ? 'LONG' : 'SHORT';
+
+          if (boughtTs && soldTs) {
+            const [bDate, bTime] = boughtTs.split(' ');
+            const [sDate, sTime] = soldTs.split(' ');
+
+            if (bDate && bDate.includes('/')) {
+              const parts = bDate.split('/');
+              if (parts.length === 3) {
+                formattedDate = `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
+              }
+            }
+
+            if (sideVal === 'LONG') {
+              entryTimeStr = bTime || '';
+              exitTimeStr = sTime || '';
+            } else {
+              entryTimeStr = sTime || '';
+              exitTimeStr = bTime || '';
             }
           }
 
-          const sideVal = buyPrice < sellPrice ? 'LONG' : 'SHORT';
           const entryP = sideVal === 'LONG' ? buyPrice : sellPrice;
           const exitP = sideVal === 'LONG' ? sellPrice : buyPrice;
           const matchedOpt = SYMBOL_OPTIONS.find(opt => symbolStr.toUpperCase().includes(opt.value))?.value || 'MES';
@@ -236,6 +255,8 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
             contractsTraded: qtyVal,
             entryPrice: entryP,
             exitPrice: exitP,
+            entryTime: entryTimeStr,
+            exitTime: exitTimeStr,
             netPnL,
             grossPnL: netPnL,
             commissions: 2.50,
