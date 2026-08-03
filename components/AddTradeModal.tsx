@@ -26,17 +26,6 @@ const getContractSpecs = (symbolStr: string) => {
   return { value: 'MES', label: 'MES ($5/pt)', tickSize: 0.25, tickValue: 1.25, multiplier: 5 };
 };
 
-const parseTimeStringToSeconds = (timeStr: string) => {
-  if (!timeStr) return 0;
-  const clean = timeStr.replace(/\u202f/g, ' ').trim();
-  const [time, modifier] = clean.split(' ');
-  if (!time) return 0;
-  let [hours, minutes, seconds] = time.split(':').map(Number);
-  if (modifier === 'PM' && hours < 12) hours += 12;
-  if (modifier === 'AM' && hours === 12) hours = 0;
-  return (hours || 0) * 3600 + (minutes || 0) * 60 + (seconds || 0);
-};
-
 export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -70,7 +59,7 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
   const [newTagInput, setNewTagInput] = useState('');
   const [activeNewTagType, setActiveNewTagType] = useState<'strategy' | 'setup' | 'mistake' | null>(null);
 
-  // Database Queries (keeping strategies/setups/mistakes local or syncing as needed)
+  // Database Queries
   const strategies = useLiveQuery(() => db.strategies.toArray()) || [];
   const setups = useLiveQuery(() => db.setups.toArray()) || [];
   const mistakes = useLiveQuery(() => db.mistakes.toArray()) || [];
@@ -227,8 +216,6 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
           const netPnL = parseFloat(rawPnL) || 0;
 
           const boughtTs = rowObj['boughtTimestamp'] || '';
-          const soldTs = rowObj['soldTimestamp'] || '';
-
           let formattedDate = new Date().toISOString().split('T')[0];
           if (boughtTs.includes('/')) {
             const parts = boughtTs.split(' ')[0].split('/');
@@ -338,7 +325,7 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
 
       setTimeout(() => {
         onClose();
-        window.location.reload();
+        window.location.href = '/';
       }, 1500);
 
     } catch (err: any) {
@@ -394,7 +381,7 @@ export default function AddTradeModal({ isOpen, onClose }: AddTradeModalProps) {
     await syncTagToMasterTables(selectedStrategy, selectedSetup, selectedMistake);
     resetForm();
     onClose();
-    window.location.reload();
+    window.location.href = '/';
   };
 
   const inputClass = "w-full border border-slate-200 bg-slate-50/50 rounded-xl p-2.5 text-xs text-[#ec3044] font-bold focus:outline-none focus:ring-2 focus:ring-[#ec3044] focus:bg-white transition";
