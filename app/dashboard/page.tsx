@@ -11,7 +11,9 @@ import {
   Plus, 
   AlertTriangle,
   Clock,
-  Download 
+  Download,
+  TrendingUp,
+  TrendingDown 
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
@@ -154,9 +156,6 @@ export default function DashboardPage() {
       timeDecimal = h + m / 60;
     }
 
-    // RTH AM: 08:30 AM (8.5) to 12:00 PM (12.0) Central Time
-    // RTH PM: 12:00 PM (12.0) to 03:00 PM (15.0) Central Time
-    // Globex: Outside 8:30 AM - 3:00 PM CT
     if (timeDecimal >= 8.5 && timeDecimal < 12.0) {
       sessionMap['RTH AM'].count += 1;
       sessionMap['RTH AM'].pnl += (t.netPnL || 0);
@@ -196,6 +195,16 @@ export default function DashboardPage() {
     const y = svgHeight - ((d.pnl - minVal) / range) * (svgHeight - 60) - 30;
     return { x, y, ...d };
   });
+
+  // Calculate Peak & Trough indices
+  let peakIndex = 0;
+  let troughIndex = 0;
+  pointsCoordinates.forEach((p, idx) => {
+    if (p.pnl > pointsCoordinates[peakIndex].pnl) peakIndex = idx;
+    if (p.pnl < pointsCoordinates[troughIndex].pnl) troughIndex = idx;
+  });
+  const peakPoint = pointsCoordinates[peakIndex];
+  const troughPoint = pointsCoordinates[troughIndex];
 
   const baselineY = svgHeight - ((0 - minVal) / range) * (svgHeight - 60) - 30;
   const polylineStr = pointsCoordinates.map(p => `${p.x},${p.y}`).join(' ');
@@ -295,19 +304,35 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* EQUITY CURVE (Hidden in Print) */}
+      {/* EQUITY CURVE WITH PEAK & TROUGH WATERMARKS */}
       <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm p-6 space-y-4 w-full print:hidden">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
           <div>
             <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Equity Curve Performance</h2>
             <p className="text-[11px] text-slate-400">Hover across the chart to inspect chronological balance milestones</p>
           </div>
-          <div className="text-right">
-            <div className={`text-sm font-mono font-bold ${activeHoverData?.pnl >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-              Balance: ${activeHoverData?.pnl.toFixed(2)}
-            </div>
-            <div className="text-[10px] text-slate-400">
-              {activeHoverData?.date} {activeHoverData?.symbol !== 'Baseline' ? `• ${activeHoverData?.symbol} (${activeHoverData?.tradePnL >= 0 ? '+' : ''}${(activeHoverData?.tradePnL || 0).toFixed(2)})` : ''}
+          
+          {/* Peak & Trough Water Marks Badges */}
+          <div className="flex items-center gap-4 text-xs font-mono">
+            {peakPoint && (
+              <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-xl text-emerald-700 font-bold">
+                <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Peak: ${peakPoint.pnl.toFixed(2)}</span>
+              </div>
+            )}
+            {troughPoint && (
+              <div className="flex items-center gap-1.5 bg-rose-50 border border-rose-200 px-3 py-1 rounded-xl text-rose-700 font-bold">
+                <TrendingDown className="w-3.5 h-3.5 text-rose-600" />
+                <span>Trough: ${troughPoint.pnl.toFixed(2)}</span>
+              </div>
+            )}
+            <div className="text-right pl-2 border-l border-slate-200">
+              <div className={`text-sm font-bold ${activeHoverData?.pnl >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                Balance: ${activeHoverData?.pnl.toFixed(2)}
+              </div>
+              <div className="text-[10px] text-slate-400">
+                {activeHoverData?.date} {activeHoverData?.symbol !== 'Baseline' ? `• ${activeHoverData?.symbol} (${activeHoverData?.tradePnL >= 0 ? '+' : ''}${(activeHoverData?.tradePnL || 0).toFixed(2)})` : ''}
+              </div>
             </div>
           </div>
         </div>
@@ -366,17 +391,22 @@ export default function DashboardPage() {
                 <line x1={pointsCoordinates[activeIndex].x} y1={0} x2={pointsCoordinates[activeIndex].x} y2={svgHeight} stroke="#cbd5e1" strokeWidth="1.5" strokeDasharray="4 4" />
               )}
 
-              {pointsCoordinates.map((p, idx) => (
-                <circle 
-                  key={idx}
-                  cx={p.x} 
-                  cy={p.y} 
-                  r={activeIndex === idx ? 8 : 5} 
-                  fill={p.pnl >= 0 ? '#10b981' : '#f43f5e'} 
-                  stroke="#ffffff"
-                  strokeWidth="2.5"
-                />
-              ))}
+              {pointsCoordinates.map((p, idx) => {
+                const isPeak = p === peakPoint && p.pnl > 0;
+                const isTrough = p === troughPoint && p.pnl < 0;
+
+                return (
+                  <circle 
+                    key={idx}
+                    cx={p.x} 
+                    cy={p.y} 
+                    r={activeIndex === idx ? 8 : (isPeak || isTrough ? 6 : 4.5)} 
+                    fill={p.pnl >= 0 ? '#10b981' : '#f43f5e'} 
+                    stroke="#ffffff"
+                    strokeWidth="2.5"
+                  />
+                );
+              })}
             </svg>
           )}
         </div>
