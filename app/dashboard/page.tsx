@@ -196,15 +196,15 @@ export default function DashboardPage() {
     return { x, y, ...d };
   });
 
-  // Calculate Peak & Trough indices
-  let peakIndex = 0;
-  let troughIndex = 0;
+  // Calculate ATH & ATL indices
+  let athIndex = 0;
+  let atlIndex = 0;
   pointsCoordinates.forEach((p, idx) => {
-    if (p.pnl > pointsCoordinates[peakIndex].pnl) peakIndex = idx;
-    if (p.pnl < pointsCoordinates[troughIndex].pnl) troughIndex = idx;
+    if (p.pnl > pointsCoordinates[athIndex].pnl) athIndex = idx;
+    if (p.pnl < pointsCoordinates[atlIndex].pnl) atlIndex = idx;
   });
-  const peakPoint = pointsCoordinates[peakIndex];
-  const troughPoint = pointsCoordinates[troughIndex];
+  const athPoint = pointsCoordinates[athIndex];
+  const atlPoint = pointsCoordinates[atlIndex];
 
   const baselineY = svgHeight - ((0 - minVal) / range) * (svgHeight - 60) - 30;
   const polylineStr = pointsCoordinates.map(p => `${p.x},${p.y}`).join(' ');
@@ -304,7 +304,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* EQUITY CURVE WITH PEAK & TROUGH WATERMARKS */}
+      {/* EQUITY CURVE WITH ATH & ATL WATERMARKS */}
       <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm p-6 space-y-4 w-full print:hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
           <div>
@@ -312,18 +312,18 @@ export default function DashboardPage() {
             <p className="text-[11px] text-slate-400">Hover across the chart to inspect chronological balance milestones</p>
           </div>
           
-          {/* Peak & Trough Water Marks Badges */}
+          {/* ATH & ATL Water Marks Badges */}
           <div className="flex items-center gap-4 text-xs font-mono">
-            {peakPoint && (
+            {athPoint && (
               <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-xl text-emerald-700 font-bold">
                 <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Peak: ${peakPoint.pnl.toFixed(2)}</span>
+                <span>ATH: ${athPoint.pnl.toFixed(2)}</span>
               </div>
             )}
-            {troughPoint && (
+            {atlPoint && (
               <div className="flex items-center gap-1.5 bg-rose-50 border border-rose-200 px-3 py-1 rounded-xl text-rose-700 font-bold">
                 <TrendingDown className="w-3.5 h-3.5 text-rose-600" />
-                <span>Trough: ${troughPoint.pnl.toFixed(2)}</span>
+                <span>ATL: ${atlPoint.pnl.toFixed(2)}</span>
               </div>
             )}
             <div className="text-right pl-2 border-l border-slate-200">
@@ -392,15 +392,15 @@ export default function DashboardPage() {
               )}
 
               {pointsCoordinates.map((p, idx) => {
-                const isPeak = p === peakPoint && p.pnl > 0;
-                const isTrough = p === troughPoint && p.pnl < 0;
+                const isAth = p === athPoint && p.pnl > 0;
+                const isAtl = p === atlPoint && p.pnl < 0;
 
                 return (
                   <circle 
                     key={idx}
                     cx={p.x} 
                     cy={p.y} 
-                    r={activeIndex === idx ? 8 : (isPeak || isTrough ? 6 : 4.5)} 
+                    r={activeIndex === idx ? 8 : (isAth || isAtl ? 6 : 4.5)} 
                     fill={p.pnl >= 0 ? '#10b981' : '#f43f5e'} 
                     stroke="#ffffff"
                     strokeWidth="2.5"
