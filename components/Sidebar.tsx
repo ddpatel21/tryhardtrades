@@ -10,7 +10,6 @@ import {
   Tags, 
   Plus, 
   Target,
-  ShieldCheck,
   Layers,
   ChevronDown,
   ChevronRight,
@@ -34,22 +33,6 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
   const pathname = usePathname();
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
 
-  // Pixel-based Font Size State with LocalStorage Persistence
-  const [fontSizePx, setFontSizePx] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('tryhard_font_px');
-      return saved ? parseInt(saved, 10) : 14;
-    }
-    return 14;
-  });
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('tryhard_font_px', fontSizePx.toString());
-      document.documentElement.style.fontSize = `${fontSizePx}px`;
-    }
-  }, [fontSizePx]);
-
   // Collapsed State for Desktop & Mobile Drawer State
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
@@ -61,10 +44,9 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
     }
     loadAccounts();
 
-    // Listen for account updates/changes if any other component triggers it
     const handleRefresh = () => loadAccounts();
     window.addEventListener('account-filter-changed', handleRefresh);
-    window.addEventListener('open-add-account', handleRefresh); // can refetch on changes
+    window.addEventListener('open-add-account', handleRefresh);
     return () => {
       window.removeEventListener('account-filter-changed', handleRefresh);
       window.removeEventListener('open-add-account', handleRefresh);
@@ -76,13 +58,9 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
   const [isAddTradeOpen, setIsAddTradeOpen] = useState<boolean>(false);
   const [isAccountManagerOpen, setIsAccountManagerOpen] = useState<boolean>(false);
 
-  // Track which groups are expanded (folded/closed by default)
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
-
-  // Edit Account State in Manager Drawer
   const [editingAccount, setEditingAccount] = useState<TradingAccount | null>(null);
 
-  // Close Account Manager on ESC key press
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isAccountManagerOpen) {
@@ -123,7 +101,6 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
     setAccounts(data);
   };
 
-  // Group accounts by their groupName
   const groupedAccounts: Record<string, typeof accounts> = {};
   accounts.forEach(acc => {
     const g = acc.groupName || 'Default Group';
@@ -173,7 +150,7 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
 
       {/* Sidebar Navigation */}
       <aside className={`bg-white border-r border-slate-200/80 flex flex-col justify-between p-6 fixed inset-y-0 left-0 z-50 transition-all duration-300 print:hidden ${
-        isCollapsed ? 'w-20' : 'w-64'
+        isCollapsed ? 'w-20 px-3' : 'w-64'
       } ${
         isMobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
       }`}>
@@ -181,7 +158,7 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
         <div className="space-y-6 overflow-y-auto overflow-x-hidden flex-1 pr-1">
           
           {/* Brand Logo & Name & Settings */}
-          <div className="flex items-center justify-between px-2">
+          <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'justify-between px-2'}`}>
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 bg-[#ec3044] rounded-xl flex items-center justify-center text-white shadow-md shadow-[#ec3044]/30 shrink-0">
                 <Target className="w-5 h-5" />
@@ -204,7 +181,7 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
             )}
           </div>
 
-          {/* Account Group & Collapsible Dropdown-within-Dropdown */}
+          {/* Account Group Selector */}
           {!isCollapsed && (
             <div className="relative">
               <button 
@@ -242,7 +219,6 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
 
                       return (
                         <div key={groupName} className="py-1 border-t border-slate-100">
-                          {/* Group Header (Accordion Toggle & Select Group) */}
                           <div className={`flex items-center justify-between px-3 py-2 bg-slate-50 hover:bg-slate-100 transition ${
                             selectedAccount === `Group: ${groupName}` ? 'bg-[#ec3044]/10 text-[#ec3044]' : 'text-slate-800'
                           }`}>
@@ -267,7 +243,6 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
                             </button>
                           </div>
 
-                          {/* Collapsible Nested Accounts (Folded by default) */}
                           {isExpanded && (
                             <div className="pl-4 pr-2 py-1 space-y-1 bg-white">
                               {groupAccs.map((acc) => (
@@ -329,10 +304,12 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
             </div>
           )}
 
-          {/* Fully Responsive Add Trade Button */}
+          {/* Add Trade Button */}
           <button 
             onClick={() => setIsAddTradeOpen(true)}
-            className={`w-full bg-[#ec3044] hover:bg-[#d4283b] text-white font-bold py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 shadow-sm transition cursor-pointer text-sm ${isCollapsed ? 'px-2' : ''}`}
+            className={`w-full bg-[#ec3044] hover:bg-[#d4283b] text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 shadow-sm transition cursor-pointer text-sm ${
+              isCollapsed ? 'px-0' : 'px-4'
+            }`}
             title="Add Trade"
           >
             <Plus className="w-4 h-4 shrink-0" />
@@ -350,7 +327,9 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
                   key={item.href}
                   href={item.href}
                   title={item.label}
-                  className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition ${
+                  className={`flex items-center gap-3 py-2.5 rounded-xl text-xs font-bold transition ${
+                    isCollapsed ? 'justify-center px-0' : 'px-3.5'
+                  } ${
                     isActive
                       ? 'bg-[#ec3044]/10 text-[#ec3044]'
                       : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
@@ -365,37 +344,20 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
 
         </div>
 
-        {/* Footer: Font Size Slider & Collapse Button */}
-        <div className="space-y-3 pt-4 border-t border-slate-100">
-          {!isCollapsed && (
-            <div className="p-3 bg-slate-50 border border-slate-200/60 rounded-xl space-y-1.5">
-              <div className="flex justify-between items-center text-[11px] font-bold text-slate-700">
-                <span>Font Size</span>
-                <span className="text-[#ec3044] font-mono">{fontSizePx}px</span>
-              </div>
-              <input 
-                type="range" 
-                min="12" 
-                max="20" 
-                step="1"
-                value={fontSizePx}
-                onChange={(e) => setFontSizePx(parseInt(e.target.value, 10))}
-                className="w-full accent-[#ec3044] cursor-pointer"
-              />
-            </div>
-          )}
-
-          {/* Collapse / Expand Toggle Button at Bottom */}
+        {/* Footer Collapse Button */}
+        <div className="pt-4 border-t border-slate-100">
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="w-full py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition cursor-pointer"
+            className={`w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition cursor-pointer ${
+              isCollapsed ? 'px-0' : 'px-3'
+            }`}
             title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
           >
             {isCollapsed ? (
-              <ChevronRight className="w-4 h-4" />
+              <ChevronRight className="w-4 h-4 shrink-0" />
             ) : (
               <>
-                <ChevronLeft className="w-4 h-4" />
+                <ChevronLeft className="w-4 h-4 shrink-0" />
                 <span>Collapse Sidebar</span>
               </>
             )}
@@ -404,7 +366,7 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
 
       </aside>
 
-      {/* Main Content Area (Dynamic padding responsive to collapse state) */}
+      {/* Main Content Area */}
       <main className={`flex-1 min-h-screen pt-16 lg:pt-0 transition-all duration-300 ${
         isCollapsed ? 'lg:pl-20' : 'lg:pl-64'
       }`}>
@@ -489,7 +451,6 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
                     </div>
                   </div>
 
-                  {/* Statement Data Input Type Selector in Edit Form */}
                   <div>
                     <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Data Input Type (Statement Format)</label>
                     <select 
@@ -538,7 +499,6 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
                 </button>
               )}
 
-              {/* Grouped Account List with #EC3044 separators */}
               <div className="space-y-6 pt-2">
                 <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Existing Accounts</h3>
                 
@@ -547,8 +507,6 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
                 ) : (
                   Object.entries(groupedAccounts).map(([groupName, groupAccs], groupIdx) => (
                     <div key={groupName} className="space-y-3">
-                      
-                      {/* Red Separator Line with Group Title */}
                       {groupIdx > 0 && <hr className="border-t-2 border-[#ec3044] my-4" />}
                       
                       <div className="flex items-center justify-between">
@@ -620,7 +578,6 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
         </div>
       )}
 
-      {/* Modals */}
       <AccountModal />
       <AddTradeModal isOpen={isAddTradeOpen} onClose={() => setIsAddTradeOpen(false)} />
 
