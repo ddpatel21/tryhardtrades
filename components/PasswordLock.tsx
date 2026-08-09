@@ -1,14 +1,14 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Target, Lock } from 'lucide-react';
+import { Target, Lock, Eye, EyeOff } from 'lucide-react';
 
 export default function PasswordLock({ children }: { children: React.ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState(false);
 
-  // Check if already authenticated in the current session
   useEffect(() => {
     const auth = sessionStorage.getItem('tryhard_auth');
     if (auth === 'true') {
@@ -18,8 +18,7 @@ export default function PasswordLock({ children }: { children: React.ReactNode }
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    // Set your custom password here
-    const correctPassword = '0616'; 
+    const correctPassword = 'your-secure-password'; 
 
     if (passwordInput === correctPassword) {
       sessionStorage.setItem('tryhard_auth', 'true');
@@ -45,19 +44,27 @@ export default function PasswordLock({ children }: { children: React.ReactNode }
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
-              <div className="relative">
-                <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+              <div className="relative flex items-center">
+                <span className="absolute left-3 flex items-center pointer-events-none text-slate-400">
                   <Lock className="w-4 h-4" />
                 </span>
                 <input 
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   value={passwordInput}
                   onChange={(e) => setPasswordInput(e.target.value)}
                   placeholder="Enter journal password..."
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-3 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[#ec3044]"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-10 py-3 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#ec3044]"
                   autoFocus
                   required
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 text-slate-400 hover:text-slate-600 transition cursor-pointer"
+                  title={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
               {error && (
                 <p className="text-[11px] font-bold text-rose-500 mt-2 text-left">Incorrect password. Try again.</p>
