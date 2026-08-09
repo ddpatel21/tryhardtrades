@@ -17,7 +17,9 @@ import {
   UserPlus,
   Settings,
   Trash2,
-  Edit2
+  Edit2,
+  ChevronLeft,
+  Menu
 } from 'lucide-react';
 import { cloudDb } from '@/lib/cloudDb';
 import { TradingAccount } from '@/lib/db';
@@ -31,6 +33,26 @@ interface SidebarLayoutProps {
 export default function Sidebar({ children }: SidebarLayoutProps) {
   const pathname = usePathname();
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
+
+  // Pixel-based Font Size State with LocalStorage Persistence
+  const [fontSizePx, setFontSizePx] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('tryhard_font_px');
+      return saved ? parseInt(saved, 10) : 14;
+    }
+    return 14;
+  });
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('tryhard_font_px', fontSizePx.toString());
+      document.documentElement.style.fontSize = `${fontSizePx}px`;
+    }
+  }, [fontSizePx]);
+
+  // Collapsed State for Desktop & Mobile Drawer State
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isMobileOpen, setIsMobileOpen] = useState(false);
 
   useEffect(() => {
     async function loadAccounts() {
@@ -125,162 +147,196 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
   ];
 
   return (
-    <div className="min-h-screen bg-[#F8F9FD] text-slate-800 font-sans">
+    <div className="min-h-screen bg-[#F8F9FD] text-slate-800 font-sans flex">
       
+      {/* Mobile Top Header Toggle */}
+      <div className="lg:hidden fixed top-0 left-0 right-0 h-16 bg-white border-b border-slate-200 z-50 flex items-center justify-between px-4 print:hidden">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-[#ec3044] rounded-xl flex items-center justify-center text-white font-bold">🎯</div>
+          <span className="font-black text-slate-900 text-sm">TryhardTrades</span>
+        </div>
+        <button 
+          onClick={() => setIsMobileOpen(!isMobileOpen)}
+          className="p-2 text-slate-700 bg-slate-100 rounded-xl cursor-pointer"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
+      </div>
+
+      {/* Mobile Backdrop */}
+      {isMobileOpen && (
+        <div 
+          onClick={() => setIsMobileOpen(false)}
+          className="lg:hidden fixed inset-0 bg-slate-900/50 z-40 backdrop-blur-xs"
+        />
+      )}
+
       {/* Sidebar Navigation */}
-      <aside className="w-64 bg-white border-r border-slate-200/80 flex flex-col justify-between p-6 fixed inset-y-0 left-0 z-40 print:hidden">
+      <aside className={`bg-white border-r border-slate-200/80 flex flex-col justify-between p-6 fixed inset-y-0 left-0 z-50 transition-all duration-300 print:hidden ${
+        isCollapsed ? 'w-20' : 'w-64'
+      } ${
+        isMobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+      }`}>
         
-        <div className="space-y-6">
+        <div className="space-y-6 overflow-y-auto overflow-x-hidden flex-1 pr-1">
           
           {/* Brand Logo & Name & Settings */}
           <div className="flex items-center justify-between px-2">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 bg-[#ec3044] rounded-xl flex items-center justify-center text-white shadow-md shadow-[#ec3044]/30">
+              <div className="w-9 h-9 bg-[#ec3044] rounded-xl flex items-center justify-center text-white shadow-md shadow-[#ec3044]/30 shrink-0">
                 <Target className="w-5 h-5" />
               </div>
-              <div>
-                <h2 className="font-black text-slate-900 tracking-tight text-base leading-tight">TryhardTrades</h2>
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Trading Journal</span>
-              </div>
+              {!isCollapsed && (
+                <div>
+                  <h2 className="font-black text-slate-900 tracking-tight text-base leading-tight">TryhardTrades</h2>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Trading Journal</span>
+                </div>
+              )}
             </div>
-            <button 
-              onClick={() => setIsAccountManagerOpen(true)}
-              className="p-2 text-slate-400 hover:text-[#ec3044] hover:bg-slate-50 rounded-xl transition cursor-pointer"
-              title="Account Manager"
-            >
-              <Settings className="w-4 h-4" />
-            </button>
+            {!isCollapsed && (
+              <button 
+                onClick={() => setIsAccountManagerOpen(true)}
+                className="p-2 text-slate-400 hover:text-[#ec3044] hover:bg-slate-50 rounded-xl transition cursor-pointer"
+                title="Account Manager"
+              >
+                <Settings className="w-4 h-4" />
+              </button>
+            )}
           </div>
 
           {/* Account Group & Collapsible Dropdown-within-Dropdown */}
-          <div className="relative">
-            <button 
-              onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-              className="w-full bg-slate-50 border border-slate-200 hover:bg-slate-100/80 p-2.5 rounded-xl flex items-center justify-between text-xs font-bold text-slate-700 transition cursor-pointer"
-            >
-              <div className="flex items-center gap-2 truncate">
-                <Layers className="w-3.5 h-3.5 text-[#ec3044]" />
-                <span className="truncate">{selectedAccount}</span>
-              </div>
-              <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-            </button>
-
-            {isDropdownOpen && (
-              <div className="absolute top-full left-0 mt-1.5 w-full bg-white border border-slate-200 rounded-xl shadow-lg py-1.5 z-50 space-y-1 max-h-80 overflow-y-auto">
-                <button
-                  onClick={() => {
-                    setSelectedAccount('All Accounts');
-                    setIsDropdownOpen(false);
-                    window.dispatchEvent(new CustomEvent('account-filter-changed', { detail: 'All Accounts' }));
-                  }}
-                  className={`w-full text-left px-3 py-2 text-xs font-semibold flex items-center justify-between hover:bg-slate-50 transition ${
-                    selectedAccount === 'All Accounts' ? 'text-[#ec3044] bg-[#ec3044]/5 font-bold' : 'text-slate-600'
-                  }`}
-                >
-                  <span>All Accounts</span>
-                  <span className="text-[9px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">Global</span>
-                </button>
-
-                {accounts.length === 0 ? (
-                  <div className="px-3 py-2 text-[11px] text-slate-400 text-center italic">No accounts created yet.</div>
-                ) : (
-                  Object.entries(groupedAccounts).map(([groupName, groupAccs]) => {
-                    const isExpanded = !!expandedGroups[groupName];
-
-                    return (
-                      <div key={groupName} className="py-1 border-t border-slate-100">
-                        {/* Group Header (Accordion Toggle & Select Group) */}
-                        <div className={`flex items-center justify-between px-3 py-2 bg-slate-50 hover:bg-slate-100 transition ${
-                          selectedAccount === `Group: ${groupName}` ? 'bg-[#ec3044]/10 text-[#ec3044]' : 'text-slate-800'
-                        }`}>
-                          <button
-                            onClick={(e) => toggleGroupExpand(groupName, e)}
-                            className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider flex-1 text-left cursor-pointer"
-                          >
-                            {isExpanded ? <ChevronDown className="w-3.5 h-3.5 text-slate-400" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-400" />}
-                            <span className="w-1.5 h-1.5 rounded-full bg-[#ec3044]"></span>
-                            {groupName} <span className="text-[9px] text-slate-400 font-normal">({groupAccs.length})</span>
-                          </button>
-
-                          <button
-                            onClick={() => {
-                              setSelectedAccount(`Group: ${groupName}`);
-                              setIsDropdownOpen(false);
-                              window.dispatchEvent(new CustomEvent('account-filter-changed', { detail: { type: 'group', name: groupName } }));
-                            }}
-                            className="text-[9px] font-bold text-slate-500 hover:text-[#ec3044] px-2 py-0.5 rounded bg-white border border-slate-200 transition cursor-pointer"
-                          >
-                            Select Group
-                          </button>
-                        </div>
-
-                        {/* Collapsible Nested Accounts (Folded by default) */}
-                        {isExpanded && (
-                          <div className="pl-4 pr-2 py-1 space-y-1 bg-white">
-                            {groupAccs.map((acc) => (
-                              <div key={acc.id} className="flex items-center justify-between px-2 py-1.5 hover:bg-slate-50 group rounded-lg">
-                                <button
-                                  onClick={() => {
-                                    setSelectedAccount(acc.name);
-                                    setIsDropdownOpen(false);
-                                    window.dispatchEvent(new CustomEvent('account-filter-changed', { detail: { type: 'account', name: acc.name } }));
-                                  }}
-                                  className={`text-left text-xs font-semibold flex-1 truncate pr-2 ${
-                                    selectedAccount === acc.name ? 'text-[#ec3044] font-bold' : 'text-slate-600'
-                                  }`}
-                                >
-                                  <div className="truncate">{acc.name}</div>
-                                  <div className="text-[9px] text-slate-400">{acc.firm} • <span className="font-mono">${acc.balance.toLocaleString()}</span></div>
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleDeleteAccount(acc.id);
-                                  }}
-                                  className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-500 p-1 transition cursor-pointer"
-                                  title="Delete Account"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })
-                )}
-
-                <div className="border-t border-slate-100 pt-1 mt-1 px-2 space-y-1">
-                  <button
-                    onClick={() => {
-                      setIsDropdownOpen(false);
-                      window.dispatchEvent(new CustomEvent('open-add-account'));
-                    }}
-                    className="w-full text-center py-2 text-xs font-bold text-[#ec3044] hover:bg-[#ec3044]/5 rounded-lg transition flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <UserPlus className="w-3.5 h-3.5" /> + Create New Account
-                  </button>
-                  <button
-                    onClick={() => {
-                      setIsDropdownOpen(false);
-                      setIsAccountManagerOpen(true);
-                    }}
-                    className="w-full text-center py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <Settings className="w-3.5 h-3.5" /> Open Account Manager
-                  </button>
+          {!isCollapsed && (
+            <div className="relative">
+              <button 
+                onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                className="w-full bg-slate-50 border border-slate-200 hover:bg-slate-100/80 p-2.5 rounded-xl flex items-center justify-between text-xs font-bold text-slate-700 transition cursor-pointer"
+              >
+                <div className="flex items-center gap-2 truncate">
+                  <Layers className="w-3.5 h-3.5 text-[#ec3044]" />
+                  <span className="truncate">{selectedAccount}</span>
                 </div>
-              </div>
-            )}
-          </div>
+                <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              </button>
+
+              {isDropdownOpen && (
+                <div className="absolute top-full left-0 mt-1.5 w-full bg-white border border-slate-200 rounded-xl shadow-lg py-1.5 z-50 space-y-1 max-h-80 overflow-y-auto">
+                  <button
+                    onClick={() => {
+                      setSelectedAccount('All Accounts');
+                      setIsDropdownOpen(false);
+                      window.dispatchEvent(new CustomEvent('account-filter-changed', { detail: 'All Accounts' }));
+                    }}
+                    className={`w-full text-left px-3 py-2 text-xs font-semibold flex items-center justify-between hover:bg-slate-50 transition ${
+                      selectedAccount === 'All Accounts' ? 'text-[#ec3044] bg-[#ec3044]/5 font-bold' : 'text-slate-600'
+                    }`}
+                  >
+                    <span>All Accounts</span>
+                    <span className="text-[9px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">Global</span>
+                  </button>
+
+                  {accounts.length === 0 ? (
+                    <div className="px-3 py-2 text-[11px] text-slate-400 text-center italic">No accounts created yet.</div>
+                  ) : (
+                    Object.entries(groupedAccounts).map(([groupName, groupAccs]) => {
+                      const isExpanded = !!expandedGroups[groupName];
+
+                      return (
+                        <div key={groupName} className="py-1 border-t border-slate-100">
+                          {/* Group Header (Accordion Toggle & Select Group) */}
+                          <div className={`flex items-center justify-between px-3 py-2 bg-slate-50 hover:bg-slate-100 transition ${
+                            selectedAccount === `Group: ${groupName}` ? 'bg-[#ec3044]/10 text-[#ec3044]' : 'text-slate-800'
+                          }`}>
+                            <button
+                              onClick={(e) => toggleGroupExpand(groupName, e)}
+                              className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider flex-1 text-left cursor-pointer"
+                            >
+                              {isExpanded ? <ChevronDown className="w-3.5 h-3.5 text-slate-400" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-400" />}
+                              <span className="w-1.5 h-1.5 rounded-full bg-[#ec3044]"></span>
+                              {groupName} <span className="text-[9px] text-slate-400 font-normal">({groupAccs.length})</span>
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                setSelectedAccount(`Group: ${groupName}`);
+                                setIsDropdownOpen(false);
+                                window.dispatchEvent(new CustomEvent('account-filter-changed', { detail: { type: 'group', name: groupName } }));
+                              }}
+                              className="text-[9px] font-bold text-slate-500 hover:text-[#ec3044] px-2 py-0.5 rounded bg-white border border-slate-200 transition cursor-pointer"
+                            >
+                              Select Group
+                            </button>
+                          </div>
+
+                          {/* Collapsible Nested Accounts (Folded by default) */}
+                          {isExpanded && (
+                            <div className="pl-4 pr-2 py-1 space-y-1 bg-white">
+                              {groupAccs.map((acc) => (
+                                <div key={acc.id} className="flex items-center justify-between px-2 py-1.5 hover:bg-slate-50 group rounded-lg">
+                                  <button
+                                    onClick={() => {
+                                      setSelectedAccount(acc.name);
+                                      setIsDropdownOpen(false);
+                                      window.dispatchEvent(new CustomEvent('account-filter-changed', { detail: { type: 'account', name: acc.name } }));
+                                    }}
+                                    className={`text-left text-xs font-semibold flex-1 truncate pr-2 ${
+                                      selectedAccount === acc.name ? 'text-[#ec3044] font-bold' : 'text-slate-600'
+                                    }`}
+                                  >
+                                    <div className="truncate">{acc.name}</div>
+                                    <div className="text-[9px] text-slate-400">{acc.firm} • <span className="font-mono">${acc.balance.toLocaleString()}</span></div>
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteAccount(acc.id);
+                                    }}
+                                    className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-500 p-1 transition cursor-pointer"
+                                    title="Delete Account"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+
+                  <div className="border-t border-slate-100 pt-1 mt-1 px-2 space-y-1">
+                    <button
+                      onClick={() => {
+                        setIsDropdownOpen(false);
+                        window.dispatchEvent(new CustomEvent('open-add-account'));
+                      }}
+                      className="w-full text-center py-2 text-xs font-bold text-[#ec3044] hover:bg-[#ec3044]/5 rounded-lg transition flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <UserPlus className="w-3.5 h-3.5" /> + Create New Account
+                    </button>
+                    <button
+                      onClick={() => {
+                        setIsDropdownOpen(false);
+                        setIsAccountManagerOpen(true);
+                      }}
+                      className="w-full text-center py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Settings className="w-3.5 h-3.5" /> Open Account Manager
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Fully Responsive Add Trade Button */}
           <button 
             onClick={() => setIsAddTradeOpen(true)}
-            className="w-full bg-[#ec3044] hover:bg-[#d4283b] text-white font-bold py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 shadow-sm transition cursor-pointer text-sm"
+            className={`w-full bg-[#ec3044] hover:bg-[#d4283b] text-white font-bold py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 shadow-sm transition cursor-pointer text-sm ${isCollapsed ? 'px-2' : ''}`}
+            title="Add Trade"
           >
-            <Plus className="w-4 h-4" /> Add Trade
+            <Plus className="w-4 h-4 shrink-0" />
+            {!isCollapsed && <span>Add Trade</span>}
           </button>
 
           {/* Nav Links */}
@@ -293,14 +349,15 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
                 <Link
                   key={item.href}
                   href={item.href}
+                  title={item.label}
                   className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition ${
                     isActive
                       ? 'bg-[#ec3044]/10 text-[#ec3044]'
                       : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
                   }`}
                 >
-                  <Icon className={`w-4 h-4 ${isActive ? 'text-[#ec3044]' : 'text-slate-400'}`} />
-                  {item.label}
+                  <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-[#ec3044]' : 'text-slate-400'}`} />
+                  {!isCollapsed && <span className="truncate">{item.label}</span>}
                 </Link>
               );
             })}
@@ -308,21 +365,49 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
 
         </div>
 
-        {/* Footer Playbook Status Badge */}
-        <div className="p-3 bg-slate-50 border border-slate-200/60 rounded-xl space-y-1.5">
-          <div className="flex items-center gap-2 text-[11px] font-bold text-slate-700">
-            <ShieldCheck className="w-4 h-4 text-[#10b981]" />
-            <span>Playbook Active</span>
-          </div>
-          <p className="text-[10px] text-slate-400 leading-tight">
-            Supabase Cloud Sync Active
-          </p>
+        {/* Footer: Font Size Slider & Collapse Button */}
+        <div className="space-y-3 pt-4 border-t border-slate-100">
+          {!isCollapsed && (
+            <div className="p-3 bg-slate-50 border border-slate-200/60 rounded-xl space-y-1.5">
+              <div className="flex justify-between items-center text-[11px] font-bold text-slate-700">
+                <span>Font Size</span>
+                <span className="text-[#ec3044] font-mono">{fontSizePx}px</span>
+              </div>
+              <input 
+                type="range" 
+                min="12" 
+                max="20" 
+                step="1"
+                value={fontSizePx}
+                onChange={(e) => setFontSizePx(parseInt(e.target.value, 10))}
+                className="w-full accent-[#ec3044] cursor-pointer"
+              />
+            </div>
+          )}
+
+          {/* Collapse / Expand Toggle Button at Bottom */}
+          <button
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className="w-full py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition cursor-pointer"
+            title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+          >
+            {isCollapsed ? (
+              <ChevronRight className="w-4 h-4" />
+            ) : (
+              <>
+                <ChevronLeft className="w-4 h-4" />
+                <span>Collapse Sidebar</span>
+              </>
+            )}
+          </button>
         </div>
 
       </aside>
 
-      {/* Main Content Area */}
-      <main className="pl-64 min-h-screen">
+      {/* Main Content Area (Dynamic padding responsive to collapse state) */}
+      <main className={`flex-1 min-h-screen pt-16 lg:pt-0 transition-all duration-300 ${
+        isCollapsed ? 'lg:pl-20' : 'lg:pl-64'
+      }`}>
         {children}
       </main>
 
@@ -447,7 +532,7 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
               ) : (
                 <button 
                   onClick={() => window.dispatchEvent(new CustomEvent('open-add-account'))}
-                  className="w-full py-3 bg-[#ec3044]/10 hover:bg-[#ec3044]/20 text-[#ec3044] font-bold rounded-xl text-xs transition flex items-center justify-center gap-2 cursor-pointer border border-[#ec3044]/20 shadow-sm"
+                  className="w-full py-3 bg-[#ec3044]/15 hover:bg-[#ec3044]/25 text-[#ec3044] font-bold rounded-xl text-xs transition flex items-center justify-center gap-2 cursor-pointer border border-[#ec3044]/25 shadow-sm"
                 >
                   <UserPlus className="w-4 h-4" /> + Create New Account
                 </button>
