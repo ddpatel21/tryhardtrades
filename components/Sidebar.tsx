@@ -18,7 +18,8 @@ import {
   Trash2,
   Edit2,
   ChevronLeft,
-  Menu
+  Menu,
+  LogOut
 } from 'lucide-react';
 import { cloudDb } from '@/lib/cloudDb';
 import { TradingAccount } from '@/lib/db';
@@ -27,13 +28,13 @@ import AddTradeModal from '@/components/AddTradeModal';
 
 interface SidebarLayoutProps {
   children?: React.ReactNode;
+  onOpenAddTrade?: () => void;
 }
 
-export default function Sidebar({ children }: SidebarLayoutProps) {
+export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps) {
   const pathname = usePathname();
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
 
-  // Collapsed State for Desktop & Mobile Drawer State
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
 
@@ -55,7 +56,6 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
 
   const [selectedAccount, setSelectedAccount] = useState<string>('All Accounts');
   const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
-  const [isAddTradeOpen, setIsAddTradeOpen] = useState<boolean>(false);
   const [isAccountManagerOpen, setIsAccountManagerOpen] = useState<boolean>(false);
 
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
@@ -101,6 +101,13 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
     setAccounts(data);
   };
 
+  const handleLogout = () => {
+    if (confirm('Are you sure you want to log out?')) {
+      sessionStorage.removeItem('tryhard_auth');
+      window.location.reload();
+    }
+  };
+
   const groupedAccounts: Record<string, typeof accounts> = {};
   accounts.forEach(acc => {
     const g = acc.groupName || 'Default Group';
@@ -117,15 +124,14 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
   };
 
   const navItems = [
-    { label: 'Dashboard & Reports', href: '/dashboard', icon: LayoutDashboard },
+    { label: 'Dashboard & Reports', href: '/', icon: LayoutDashboard },
     { label: 'Day View', href: '/day-view', icon: CalendarDays },
     { label: 'Trade View', href: '/trade-view', icon: TableProperties },
     { label: 'Strategies & Tags', href: '/strategies', icon: Tags },
   ];
 
   return (
-    <div className="min-h-screen bg-[#F8F9FD] text-slate-800 font-sans flex">
-      
+    <>
       {/* Mobile Top Header Toggle */}
       <div className="lg:hidden fixed top-0 left-0 right-0 h-16 bg-white border-b border-slate-200 z-50 flex items-center justify-between px-4 print:hidden">
         <div className="flex items-center gap-3">
@@ -306,7 +312,7 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
 
           {/* Add Trade Button */}
           <button 
-            onClick={() => setIsAddTradeOpen(true)}
+            onClick={onOpenAddTrade}
             className={`w-full bg-[#ec3044] hover:bg-[#d4283b] text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 shadow-sm transition cursor-pointer text-sm ${
               isCollapsed ? 'px-0' : 'px-4'
             }`}
@@ -344,8 +350,19 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
 
         </div>
 
-        {/* Footer Collapse Button */}
-        <div className="pt-4 border-t border-slate-100">
+        {/* Footer: Logout & Collapse Buttons */}
+        <div className="pt-4 border-t border-slate-100 space-y-2">
+          <button
+            onClick={handleLogout}
+            className={`w-full py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition cursor-pointer ${
+              isCollapsed ? 'px-0' : 'px-3'
+            }`}
+            title="Log Out"
+          >
+            <LogOut className="w-4 h-4 shrink-0" />
+            {!isCollapsed && <span>Log Out</span>}
+          </button>
+
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
             className={`w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition cursor-pointer ${
@@ -365,13 +382,6 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
         </div>
 
       </aside>
-
-      {/* Main Content Area */}
-      <main className={`flex-1 min-h-screen pt-16 lg:pt-0 transition-all duration-300 ${
-        isCollapsed ? 'lg:pl-20' : 'lg:pl-64'
-      }`}>
-        {children}
-      </main>
 
       {/* ACCOUNT MANAGER DRAWER SIDEBAR */}
       {isAccountManagerOpen && (
@@ -579,8 +589,6 @@ export default function Sidebar({ children }: SidebarLayoutProps) {
       )}
 
       <AccountModal />
-      <AddTradeModal isOpen={isAddTradeOpen} onClose={() => setIsAddTradeOpen(false)} />
-
-    </div>
+    </>
   );
 }
