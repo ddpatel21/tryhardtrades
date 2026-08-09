@@ -364,7 +364,11 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
           </button>
 
           <button
-            onClick={() => setIsCollapsed(!isCollapsed)}
+            onClick={() => {
+              const nextState = !isCollapsed;
+              setIsCollapsed(nextState);
+              window.dispatchEvent(new CustomEvent('sidebar-collapse-changed', { detail: nextState }));
+            }}
             className={`w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition cursor-pointer ${
               isCollapsed ? 'px-0' : 'px-3'
             }`}
