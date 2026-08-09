@@ -19,7 +19,7 @@ export default function PasswordLock({ children }: { children: React.ReactNode }
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     // Set your custom password here
-    const correctPassword = 'your-secure-password'; 
+    const correctPassword = '0616'; 
 
     if (passwordInput === correctPassword) {
       sessionStorage.setItem('tryhard_auth', 'true');
