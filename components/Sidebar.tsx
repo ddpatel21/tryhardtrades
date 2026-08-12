@@ -24,7 +24,7 @@ import {
   DollarSign
 } from 'lucide-react';
 import { cloudDb } from '@/lib/cloudDb';
-import { TradingAccount } from '@/lib/db';
+import { db, TradingAccount } from '@/lib/db';
 import AccountModal from '@/components/AccountModal';
 
 interface SidebarLayoutProps {
@@ -89,29 +89,56 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isAccountManagerOpen]);
 
-  // Load adjustments for editing account
+  // Load adjustments for editing account from Dexie and Supabase
   useEffect(() => {
     async function loadAdjustments() {
-      if (editingAccount?.id) {
+      if (!editingAccount?.id) {
+        setAdjustments([]);
+        return;
+      }
+
+      let loadedList: AccountAdjustment[] = [];
+
+      // Try local IndexedDB (Dexie)
+      try {
+        if ((db as any).adjustments) {
+          const dexieData = await (db as any).adjustments
+            .where('accountId')
+            .equals(Number(editingAccount.id))
+            .reverse()
+            .sortBy('date');
+          if (dexieData && dexieData.length > 0) {
+            loadedList = dexieData;
+          }
+        }
+      } catch (err) {
+        console.warn("Dexie adjustments read error:", err);
+      }
+
+      // Fallback/Sync with Supabase
+      try {
         const { supabase } = await import('@/lib/supabase');
         const { data } = await supabase
           .from('account_adjustments')
           .select('*')
           .eq('account_id', editingAccount.id)
           .order('date', { ascending: false });
-        if (data) {
-          setAdjustments(data.map(d => ({
+
+        if (data && data.length > 0) {
+          loadedList = data.map(d => ({
             id: d.id,
             accountId: d.account_id,
             type: d.type,
             amount: Number(d.amount),
             date: d.date,
             note: d.note
-          })));
+          }));
         }
-      } else {
-        setAdjustments([]);
+      } catch (err) {
+        console.warn("Supabase adjustments read error:", err);
       }
+
+      setAdjustments(loadedList);
     }
     loadAdjustments();
   }, [editingAccount]);
@@ -154,35 +181,69 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
     const parsedAmount = parseFloat(adjAmount);
     if (!editingAccount?.id || isNaN(parsedAmount) || parsedAmount <= 0) return;
 
-    const { supabase } = await import('@/lib/supabase');
-    const { data, error } = await supabase.from('account_adjustments').insert({
-      account_id: editingAccount.id,
+    const newAdjustment: AccountAdjustment = {
+      id: Date.now(),
+      accountId: Number(editingAccount.id),
       type: adjType,
       amount: parsedAmount,
       date: adjDate,
-      note: adjNote
-    }).select().single();
+      note: adjNote || ''
+    };
 
-    if (!error && data) {
-      setAdjustments(prev => [{
-        id: data.id,
-        accountId: data.account_id,
-        type: data.type,
-        amount: Number(data.amount),
-        date: data.date,
-        note: data.note
-      }, ...prev]);
-      setAdjAmount('');
-      setAdjNote('');
-      window.dispatchEvent(new CustomEvent('account-filter-changed'));
+    // Immediate state update to display in table right away
+    setAdjustments(prev => [newAdjustment, ...prev]);
+    setAdjAmount('');
+    setAdjNote('');
+
+    // Save to IndexedDB
+    try {
+      if ((db as any).adjustments) {
+        await (db as any).adjustments.add({
+          id: newAdjustment.id,
+          accountId: newAdjustment.accountId,
+          type: newAdjustment.type,
+          amount: newAdjustment.amount,
+          date: newAdjustment.date,
+          note: newAdjustment.note
+        });
+      }
+    } catch (err) {
+      console.warn("Dexie write error:", err);
     }
+
+    // Save to Supabase
+    try {
+      const { supabase } = await import('@/lib/supabase');
+      await supabase.from('account_adjustments').insert({
+        account_id: editingAccount.id,
+        type: adjType,
+        amount: parsedAmount,
+        date: adjDate,
+        note: adjNote || ''
+      });
+    } catch (err) {
+      console.warn("Supabase write error:", err);
+    }
+
+    window.dispatchEvent(new CustomEvent('account-filter-changed'));
   };
 
   const handleDeleteAdjustment = async (adjId?: number | string) => {
     if (!adjId) return;
-    const { supabase } = await import('@/lib/supabase');
-    await supabase.from('account_adjustments').delete().eq('id', adjId);
+
     setAdjustments(prev => prev.filter(a => a.id !== adjId));
+
+    try {
+      if ((db as any).adjustments) {
+        await (db as any).adjustments.delete(Number(adjId));
+      }
+    } catch (err) {}
+
+    try {
+      const { supabase } = await import('@/lib/supabase');
+      await supabase.from('account_adjustments').delete().eq('id', adjId);
+    } catch (err) {}
+
     window.dispatchEvent(new CustomEvent('account-filter-changed'));
   };
 
@@ -616,10 +677,10 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                         <select 
                           value={adjType} 
                           onChange={e => setAdjType(e.target.value as any)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-900"
+                          className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-900"
                         >
-                          <option value="withdrawal">Withdrawal (-)</option>
-                          <option value="deposit">Deposit (+)</option>
+                          <option value="withdrawal">Withdrawal</option>
+                          <option value="deposit">Deposit</option>
                         </select>
                       </div>
 
@@ -630,7 +691,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                           value={adjAmount}
                           onChange={e => setAdjAmount(e.target.value)}
                           placeholder="Amount $"
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-900"
+                          className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-900"
                         />
                       </div>
 
@@ -639,7 +700,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                           type="date" 
                           value={adjDate}
                           onChange={e => setAdjDate(e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-900"
+                          className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-900"
                         />
                       </div>
 
@@ -654,30 +715,31 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                       </div>
                     </div>
 
-                    {/* Adjustments History Log Table */}
-                    <div className="max-h-36 overflow-y-auto space-y-1.5">
+                    {/* Adjustments History Log List */}
+                    <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
                       {adjustments.length === 0 ? (
                         <p className="text-[10px] text-slate-400 italic text-center py-2">No adjustments logged yet for this account.</p>
                       ) : (
                         adjustments.map(adj => (
-                          <div key={adj.id} className="flex items-center justify-between p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold">
+                          <div key={adj.id} className="flex items-center justify-between p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold shadow-xs">
                             <div className="flex items-center gap-2">
-                              <span className={`px-1.5 py-0.5 rounded text-[9px] uppercase font-bold ${
+                              <span className={`px-2 py-0.5 rounded-md text-[9px] uppercase font-extrabold ${
                                 adj.type === 'deposit' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
                               }`}>
                                 {adj.type}
                               </span>
-                              <span className="font-mono text-slate-900">
-                                {adj.type === 'deposit' ? '+' : '-'}${adj.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              <span className="font-mono text-slate-900 text-xs">
+                                {adj.type === 'deposit' ? '+' : '-'}${Number(adj.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                               </span>
                             </div>
 
                             <div className="flex items-center gap-2">
-                              <span className="text-[10px] text-slate-400">{adj.date}</span>
+                              <span className="text-[10px] font-semibold text-slate-400">{adj.date}</span>
                               <button 
                                 type="button" 
                                 onClick={() => handleDeleteAdjustment(adj.id)}
-                                className="text-slate-300 hover:text-rose-500 transition cursor-pointer"
+                                className="p-1 text-slate-300 hover:text-rose-500 transition cursor-pointer"
+                                title="Delete Adjustment"
                               >
                                 ✕
                               </button>
