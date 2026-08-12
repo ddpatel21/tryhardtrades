@@ -61,11 +61,17 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [editingAccount, setEditingAccount] = useState<TradingAccount | null>(null);
 
+  // Balance Modification State inside Account Manager per account card
+  const [modifyingAccountId, setModifyingAccountId] = useState<number | string | null>(null);
+  const [modAmount, setModAmount] = useState('');
+  const [modType, setModType] = useState<'deposit' | 'withdrawal'>('deposit');
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isAccountManagerOpen) {
         setIsAccountManagerOpen(false);
         setEditingAccount(null);
+        setModifyingAccountId(null);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -99,6 +105,26 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
     setEditingAccount(null);
     const data = await cloudDb.getAccounts();
     setAccounts(data);
+  };
+
+  const handleModifyBalance = async (e: React.FormEvent, acc: TradingAccount) => {
+    e.preventDefault();
+    const val = parseFloat(modAmount);
+    if (isNaN(val) || val <= 0 || !acc.id) return;
+
+    const adjustment = modType === 'deposit' ? val : -val;
+    const newBalance = acc.balance + adjustment;
+
+    const { supabase } = await import('@/lib/supabase');
+    await supabase.from('accounts').update({
+      balance: newBalance
+    }).eq('id', acc.id);
+
+    setModifyingAccountId(null);
+    setModAmount('');
+    const data = await cloudDb.getAccounts();
+    setAccounts(data);
+    window.dispatchEvent(new CustomEvent('account-filter-changed'));
   };
 
   const handleLogout = () => {
@@ -393,6 +419,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
           onClick={() => {
             setIsAccountManagerOpen(false);
             setEditingAccount(null);
+            setModifyingAccountId(null);
           }}
           className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex justify-end"
         >
@@ -411,6 +438,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                   onClick={() => {
                     setIsAccountManagerOpen(false);
                     setEditingAccount(null);
+                    setModifyingAccountId(null);
                   }}
                   className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
                 >
@@ -534,39 +562,98 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                       </div>
 
                       <div className="space-y-2">
-                        {groupAccs.map(acc => (
-                          <div key={acc.id} className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between shadow-xs">
-                            <div>
-                              <div className="font-bold text-slate-900 text-xs flex items-center gap-2">
-                                {acc.name}
-                                <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
-                                  acc.type === 'Live' ? 'bg-emerald-50 text-emerald-600' : acc.type === 'Funded' ? 'bg-blue-50 text-blue-600' : 'bg-amber-50 text-amber-600'
-                                }`}>
-                                  {acc.type}
-                                </span>
+                        {groupAccs.map(acc => {
+                          const isModifying = modifyingAccountId === acc.id;
+
+                          return (
+                            <div key={acc.id} className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3 shadow-xs">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <div className="font-bold text-slate-900 text-xs flex items-center gap-2">
+                                    {acc.name}
+                                    <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
+                                      acc.type === 'Live' ? 'bg-emerald-50 text-emerald-600' : acc.type === 'Funded' ? 'bg-blue-50 text-blue-600' : 'bg-amber-50 text-amber-600'
+                                    }`}>
+                                      {acc.type}
+                                    </span>
+                                  </div>
+                                  <div className="text-[10px] text-slate-500 mt-0.5">
+                                    {acc.firm ? `${acc.firm} • ` : ''}<span className="font-bold text-[#ec3044]">{acc.inputType || 'Tradovate'}</span> • <span className="font-mono font-bold text-slate-900">${acc.balance.toLocaleString()}</span>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <button 
+                                    onClick={() => setModifyingAccountId(isModifying ? null : acc.id)}
+                                    className="px-2 py-1 bg-slate-200/80 hover:bg-slate-300 text-slate-700 font-bold rounded-lg text-[10px] transition cursor-pointer"
+                                    title="Deposit or Withdrawal"
+                                  >
+                                    {isModifying ? 'Cancel' : '± Balance'}
+                                  </button>
+                                  <button 
+                                    onClick={() => {
+                                      setEditingAccount(acc);
+                                      setModifyingAccountId(null);
+                                    }}
+                                    className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-lg transition cursor-pointer"
+                                    title="Edit Account Details"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleDeleteAccount(acc.id)}
+                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                                    title="Delete Account"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
                               </div>
-                              <div className="text-[10px] text-slate-500 mt-0.5">
-                                {acc.firm ? `${acc.firm} • ` : ''}<span className="font-bold text-[#ec3044]">{acc.inputType || 'Tradovate'}</span> • <span className="font-mono font-bold">${acc.balance.toLocaleString()}</span>
-                              </div>
+
+                              {/* Inline Balance Modification Form (Deposit / Withdrawal) */}
+                              {isModifying && (
+                                <form onSubmit={(e) => handleModifyBalance(e, acc)} className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
+                                  <div className="flex justify-between items-center text-[10px] font-bold text-slate-500 uppercase">
+                                    <span>Modify Balance</span>
+                                    <div className="flex gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => setModType('deposit')}
+                                        className={`px-2 py-0.5 rounded cursor-pointer ${modType === 'deposit' ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-600'}`}
+                                      >
+                                        Deposit (+)
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setModType('withdrawal')}
+                                        className={`px-2 py-0.5 rounded cursor-pointer ${modType === 'withdrawal' ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-600'}`}
+                                      >
+                                        Withdrawal (-)
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <input 
+                                      type="number" 
+                                      step="any"
+                                      value={modAmount} 
+                                      onChange={e => setModAmount(e.target.value)}
+                                      placeholder="Enter amount ($)"
+                                      className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-900"
+                                      required
+                                      autoFocus
+                                    />
+                                    <button 
+                                      type="submit"
+                                      className="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-lg text-xs cursor-pointer"
+                                    >
+                                      Apply
+                                    </button>
+                                  </div>
+                                </form>
+                              )}
                             </div>
-                            <div className="flex items-center gap-1">
-                              <button 
-                                onClick={() => setEditingAccount(acc)}
-                                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-lg transition cursor-pointer"
-                                title="Edit Account"
-                              >
-                                <Edit2 className="w-3.5 h-3.5" />
-                              </button>
-                              <button 
-                                onClick={() => handleDeleteAccount(acc.id)}
-                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
-                                title="Delete Account"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
 
                     </div>
@@ -581,6 +668,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                 onClick={() => {
                   setIsAccountManagerOpen(false);
                   setEditingAccount(null);
+                  setModifyingAccountId(null);
                 }}
                 className="w-full py-2.5 bg-slate-900 text-white font-bold rounded-xl text-xs shadow-sm cursor-pointer"
               >
