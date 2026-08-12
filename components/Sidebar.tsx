@@ -89,7 +89,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isAccountManagerOpen]);
 
-  // Load adjustments for editing account from Dexie and Supabase
+  // Load adjustments for editing account from Supabase and Dexie
   useEffect(() => {
     async function loadAdjustments() {
       if (!editingAccount?.id) {
@@ -99,23 +99,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
 
       let loadedList: AccountAdjustment[] = [];
 
-      // Try local IndexedDB (Dexie)
-      try {
-        if ((db as any).adjustments) {
-          const dexieData = await (db as any).adjustments
-            .where('accountId')
-            .equals(Number(editingAccount.id))
-            .reverse()
-            .sortBy('date');
-          if (dexieData && dexieData.length > 0) {
-            loadedList = dexieData;
-          }
-        }
-      } catch (err) {
-        console.warn("Dexie adjustments read error:", err);
-      }
-
-      // Fallback/Sync with Supabase
+      // 1. Try Supabase
       try {
         const { supabase } = await import('@/lib/supabase');
         const { data } = await supabase
@@ -128,20 +112,38 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
           loadedList = data.map(d => ({
             id: d.id,
             accountId: d.account_id,
-            type: d.type,
+            type: d.type === 'deposit' ? 'deposit' : 'withdrawal',
             amount: Number(d.amount),
             date: d.date,
-            note: d.note
+            note: d.note || ''
           }));
         }
       } catch (err) {
         console.warn("Supabase adjustments read error:", err);
       }
 
+      // 2. Fallback to Dexie local DB if Supabase returns empty/offline
+      if (loadedList.length === 0) {
+        try {
+          if ((db as any).adjustments) {
+            const dexieData = await (db as any).adjustments
+              .where('accountId')
+              .equals(Number(editingAccount.id))
+              .toArray();
+            if (dexieData && dexieData.length > 0) {
+              loadedList = dexieData;
+            }
+          }
+        } catch (err) {
+          console.warn("Dexie adjustments read error:", err);
+        }
+      }
+
       setAdjustments(loadedList);
     }
+
     loadAdjustments();
-  }, [editingAccount]);
+  }, [editingAccount?.id]);
 
   const existingGroupNames = Array.from(new Set(accounts.map(a => a.groupName).filter(Boolean)));
   const existingFirms = Array.from(new Set(accounts.map(a => a.firm).filter(Boolean)));
@@ -181,7 +183,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
       console.warn("Dexie account update error:", err);
     }
 
-    // 2. Update Supabase Remote DB
+    // 2. Update Remote Supabase DB
     try {
       const { supabase } = await import('@/lib/supabase');
       await supabase.from('accounts').update({
@@ -203,29 +205,32 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
     window.dispatchEvent(new CustomEvent('open-add-account'));
   };
 
-  const handleAddAdjustment = async (e: React.FormEvent) => {
+  const handleAddAdjustment = async (e: React.MouseEvent) => {
     e.preventDefault();
+    e.stopPropagation();
+
     const parsedAmount = parseFloat(adjAmount);
     if (!editingAccount?.id || isNaN(parsedAmount) || parsedAmount <= 0) return;
+
+    const normalizedType: 'deposit' | 'withdrawal' = adjType === 'deposit' ? 'deposit' : 'withdrawal';
 
     const newAdjustment: AccountAdjustment = {
       id: Date.now(),
       accountId: Number(editingAccount.id),
-      type: adjType,
+      type: normalizedType,
       amount: parsedAmount,
       date: adjDate,
       note: adjNote || ''
     };
 
-    // Immediate state update to display in table right away
+    // 1. Instantly append to state for immediate UI feedback
     setAdjustments(prev => [newAdjustment, ...prev]);
     setAdjAmount('');
-    setAdjNote('');
 
-    // Save to IndexedDB
+    // 2. Save to Dexie Local DB
     try {
       if ((db as any).adjustments) {
-        await (db as any).adjustments.add({
+        await (db as any).adjustments.put({
           id: newAdjustment.id,
           accountId: newAdjustment.accountId,
           type: newAdjustment.type,
@@ -238,12 +243,12 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
       console.warn("Dexie write error:", err);
     }
 
-    // Save to Supabase
+    // 3. Save to Supabase
     try {
       const { supabase } = await import('@/lib/supabase');
       await supabase.from('account_adjustments').insert({
         account_id: editingAccount.id,
-        type: adjType,
+        type: normalizedType,
         amount: parsedAmount,
         date: adjDate,
         note: adjNote || ''
