@@ -202,7 +202,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
     const data = await cloudDb.getAccounts();
     setAccounts(data);
     window.dispatchEvent(new CustomEvent('account-filter-changed'));
-    window.dispatchEvent(new CustomEvent('open-add-account'));
   };
 
   const handleAddAdjustment = async (e: React.MouseEvent) => {
