@@ -46,6 +46,15 @@ export interface TradingAccount {
   inputType: 'Tradovate' | 'AMP'; // Required data input type for statement uploads
 }
 
+export interface AccountAdjustment {
+  id?: number;
+  accountId: number;
+  type: 'deposit' | 'withdrawal';
+  amount: number;
+  date: string;
+  note?: string;
+}
+
 export interface StrategyItem {
   id?: number;
   name: string;
@@ -77,17 +86,19 @@ export class TradeZellaDatabase extends Dexie {
   setups!: Table<SetupTagItem>;
   mistakes!: Table<MistakeTagItem>;
   dailyJournals!: Table<DailyJournalItem>;
+  adjustments!: Table<AccountAdjustment>;
 
   constructor() {
     super('TradeZellaDB');
 
-    this.version(6).stores({
+    this.version(7).stores({
       trades: '++id, openDate, symbol, status, side, strategy, account, accountGroup',
       accounts: '++id, name, groupName, type, firm, inputType',
       strategies: '++id, &name',
       setups: '++id, &name',
       mistakes: '++id, &name',
       dailyJournals: '++id, &date',
+      adjustments: '++id, accountId, date, type',
     });
   }
 }

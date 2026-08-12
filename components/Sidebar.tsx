@@ -20,8 +20,7 @@ import {
   ChevronLeft,
   Menu,
   LogOut,
-  History,
-  DollarSign
+  History
 } from 'lucide-react';
 import { cloudDb } from '@/lib/cloudDb';
 import { db, TradingAccount } from '@/lib/db';
@@ -76,7 +75,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
   const [adjType, setAdjType] = useState<'deposit' | 'withdrawal'>('withdrawal');
   const [adjAmount, setAdjAmount] = useState<string>('');
   const [adjDate, setAdjDate] = useState<string>(new Date().toISOString().split('T')[0]);
-  const [adjNote, setAdjNote] = useState<string>('');
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -89,7 +87,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isAccountManagerOpen]);
 
-  // Load adjustments for editing account from Supabase and Dexie
+  // Load adjustments for selected account
   useEffect(() => {
     async function loadAdjustments() {
       if (!editingAccount?.id) {
@@ -99,43 +97,44 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
 
       let loadedList: AccountAdjustment[] = [];
 
-      // 1. Try Supabase
+      // 1. Try IndexedDB (Dexie)
       try {
-        const { supabase } = await import('@/lib/supabase');
-        const { data } = await supabase
-          .from('account_adjustments')
-          .select('*')
-          .eq('account_id', editingAccount.id)
-          .order('date', { ascending: false });
-
-        if (data && data.length > 0) {
-          loadedList = data.map(d => ({
-            id: d.id,
-            accountId: d.account_id,
-            type: d.type === 'deposit' ? 'deposit' : 'withdrawal',
-            amount: Number(d.amount),
-            date: d.date,
-            note: d.note || ''
-          }));
+        if (db.adjustments) {
+          const dexieData = await db.adjustments
+            .where('accountId')
+            .equals(Number(editingAccount.id))
+            .toArray();
+          if (dexieData && dexieData.length > 0) {
+            loadedList = dexieData;
+          }
         }
       } catch (err) {
-        console.warn("Supabase adjustments read error:", err);
+        console.error("Dexie adjustments read error:", err);
       }
 
-      // 2. Fallback to Dexie local DB if Supabase returns empty/offline
+      // 2. Try Supabase if Dexie had no records
       if (loadedList.length === 0) {
         try {
-          if ((db as any).adjustments) {
-            const dexieData = await (db as any).adjustments
-              .where('accountId')
-              .equals(Number(editingAccount.id))
-              .toArray();
-            if (dexieData && dexieData.length > 0) {
-              loadedList = dexieData;
-            }
+          const { supabase } = await import('@/lib/supabase');
+          const { data, error } = await supabase
+            .from('account_adjustments')
+            .select('*')
+            .eq('account_id', editingAccount.id)
+            .order('date', { ascending: false });
+
+          if (error) console.error("Supabase select error:", error);
+
+          if (data && data.length > 0) {
+            loadedList = data.map(d => ({
+              id: d.id,
+              accountId: d.account_id,
+              type: d.type === 'deposit' ? 'deposit' : 'withdrawal',
+              amount: Number(d.amount),
+              date: d.date,
+            }));
           }
         } catch (err) {
-          console.warn("Dexie adjustments read error:", err);
+          console.error("Supabase adjustments read error:", err);
         }
       }
 
@@ -151,11 +150,15 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
   const handleDeleteAccount = async (id?: number | string) => {
     if (!id) return;
     if (confirm('Are you sure you want to delete this account?')) {
-      const { supabase } = await import('@/lib/supabase');
-      await supabase.from('accounts').delete().eq('id', id);
-      if (db.accounts) {
-        await db.accounts.delete(Number(id));
-      }
+      try {
+        const { supabase } = await import('@/lib/supabase');
+        await supabase.from('accounts').delete().eq('id', id);
+      } catch (e) {}
+
+      try {
+        if (db.accounts) await db.accounts.delete(Number(id));
+      } catch (e) {}
+
       const data = await cloudDb.getAccounts();
       setAccounts(data);
       window.dispatchEvent(new CustomEvent('account-filter-changed'));
@@ -174,16 +177,16 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
       balance: Number(editingAccount.balance)
     };
 
-    // 1. Update Local Dexie DB
+    // Update Local Dexie DB
     try {
       if (db.accounts) {
         await db.accounts.put(updatedAcc);
       }
     } catch (err) {
-      console.warn("Dexie account update error:", err);
+      console.error("Dexie account update error:", err);
     }
 
-    // 2. Update Remote Supabase DB
+    // Update Remote Supabase DB
     try {
       const { supabase } = await import('@/lib/supabase');
       await supabase.from('accounts').update({
@@ -195,7 +198,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
         input_type: editingAccount.inputType || 'Tradovate',
       }).eq('id', editingAccount.id);
     } catch (err) {
-      console.warn("Supabase account update error:", err);
+      console.error("Supabase account update error:", err);
     }
 
     setEditingAccount(null);
@@ -218,42 +221,40 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
       accountId: Number(editingAccount.id),
       type: normalizedType,
       amount: parsedAmount,
-      date: adjDate,
-      note: adjNote || ''
+      date: adjDate
     };
 
-    // 1. Instantly append to state for immediate UI feedback
+    // 1. Immediately push to UI array
     setAdjustments(prev => [newAdjustment, ...prev]);
     setAdjAmount('');
 
-    // 2. Save to Dexie Local DB
+    // 2. Write to Dexie Local Database
     try {
-      if ((db as any).adjustments) {
-        await (db as any).adjustments.put({
-          id: newAdjustment.id,
-          accountId: newAdjustment.accountId,
+      if (db.adjustments) {
+        await db.adjustments.put({
+          id: Number(newAdjustment.id),
+          accountId: Number(newAdjustment.accountId),
           type: newAdjustment.type,
           amount: newAdjustment.amount,
-          date: newAdjustment.date,
-          note: newAdjustment.note
+          date: newAdjustment.date
         });
       }
     } catch (err) {
-      console.warn("Dexie write error:", err);
+      console.error("Dexie adjustment write error:", err);
     }
 
-    // 3. Save to Supabase
+    // 3. Write to Supabase Remote Database
     try {
       const { supabase } = await import('@/lib/supabase');
-      await supabase.from('account_adjustments').insert({
+      const { error } = await supabase.from('account_adjustments').insert({
         account_id: editingAccount.id,
         type: normalizedType,
         amount: parsedAmount,
-        date: adjDate,
-        note: adjNote || ''
+        date: adjDate
       });
+      if (error) console.error("Supabase adjustment insert error:", error);
     } catch (err) {
-      console.warn("Supabase write error:", err);
+      console.error("Supabase write exception:", err);
     }
 
     window.dispatchEvent(new CustomEvent('account-filter-changed'));
@@ -265,8 +266,8 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
     setAdjustments(prev => prev.filter(a => a.id !== adjId));
 
     try {
-      if ((db as any).adjustments) {
-        await (db as any).adjustments.delete(Number(adjId));
+      if (db.adjustments) {
+        await db.adjustments.delete(Number(adjId));
       }
     } catch (err) {}
 
