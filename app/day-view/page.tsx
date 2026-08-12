@@ -12,10 +12,20 @@ import {
   Plus,
   ArrowRight,
   SlidersHorizontal,
-  ChevronDown
+  ChevronDown,
+  ArrowDownRight
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import AddTradeModal from '@/components/AddTradeModal';
+
+interface AccountAdjustment {
+  id?: string | number;
+  accountId: string | number;
+  type: 'deposit' | 'withdrawal';
+  amount: number;
+  date: string;
+  note?: string;
+}
 
 export default function DayViewPage() {
   const router = useRouter();
@@ -26,7 +36,7 @@ export default function DayViewPage() {
     name: string 
   }>({ type: 'global', name: 'All Accounts' });
 
-  // Navigation State for Calendar Month/Year defaulting to current date (August 2026)
+  // Navigation State for Calendar Month/Year defaulting to current date
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const [selectedDateStr, setSelectedDateStr] = useState<string>(() => {
     const now = new Date();
@@ -42,12 +52,41 @@ export default function DayViewPage() {
   const [rawTrades, setRawTrades] = useState<any[]>([]);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [savedJournal, setSavedJournal] = useState<any | null>(null);
+  const [adjustments, setAdjustments] = useState<AccountAdjustment[]>([]);
 
   const fetchCloudData = async () => {
     const trades = await cloudDb.getTrades();
     const accs = await cloudDb.getAccounts();
     setRawTrades(trades);
     setAccounts(accs);
+
+    // Load Adjustments from Supabase & Dexie
+    let loadedAdjustments: AccountAdjustment[] = [];
+    try {
+      const { supabase } = await import('@/lib/supabase');
+      const { data } = await supabase.from('account_adjustments').select('*');
+      if (data && data.length > 0) {
+        loadedAdjustments = data.map(d => ({
+          id: d.id,
+          accountId: d.account_id,
+          type: d.type === 'deposit' ? 'deposit' : 'withdrawal',
+          amount: Number(d.amount),
+          date: d.date,
+          note: d.note
+        }));
+      }
+    } catch (err) {}
+
+    try {
+      if ((db as any).adjustments) {
+        const localData = await (db as any).adjustments.toArray();
+        if (localData && localData.length > 0 && loadedAdjustments.length === 0) {
+          loadedAdjustments = localData;
+        }
+      }
+    } catch (err) {}
+
+    setAdjustments(loadedAdjustments);
   };
 
   useEffect(() => {
@@ -64,9 +103,9 @@ export default function DayViewPage() {
   }, [selectedDateStr]);
 
   // Calendar Customization States
-  const [showWeekends, setShowWeekends] = useState(false); // Default weekdays only
+  const [showWeekends, setShowWeekends] = useState(false);
 
-  // Calendar Day Display Checkboxes with LocalStorage Persistence
+  // Calendar Day Display Checkboxes
   const [calendarDisplayMetrics, setCalendarDisplayMetrics] = useState(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('tryhard_calendar_metrics');
@@ -83,7 +122,7 @@ export default function DayViewPage() {
 
   const [showCalendarMetricMenu, setShowCalendarMetricMenu] = useState(false);
 
-  // Weekly Summary Column Display Checkboxes with LocalStorage Persistence
+  // Weekly Summary Column Display Checkboxes
   const [weeklyDisplayMetrics, setWeeklyDisplayMetrics] = useState(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('tryhard_weekly_metrics');
@@ -108,7 +147,7 @@ export default function DayViewPage() {
   useEffect(() => {
     const handleAccountFilterChanged = (e: any) => {
       const detail = e.detail;
-      if (detail === 'All Accounts') {
+      if (detail === 'All Accounts' || !detail) {
         setActiveFilterSelection({ type: 'global', name: 'All Accounts' });
       } else if (typeof detail === 'object' && detail.type === 'group') {
         setActiveFilterSelection({ type: 'group', name: detail.name });
@@ -118,6 +157,7 @@ export default function DayViewPage() {
           name: typeof detail === 'object' ? detail.name : detail 
         });
       }
+      fetchCloudData();
     };
 
     window.addEventListener('account-filter-changed', handleAccountFilterChanged);
@@ -133,6 +173,21 @@ export default function DayViewPage() {
         .filter(a => a.groupName === activeFilterSelection.name)
         .map(a => a.name);
       if (!trade.account || !groupAccounts.includes(trade.account)) return false;
+    }
+    return true;
+  });
+
+  // Filter adjustments based on active sidebar account/group selection
+  const filteredAdjustments = adjustments.filter(adj => {
+    if (activeFilterSelection.type === 'account') {
+      const selectedAccObj = accounts.find(a => a.name === activeFilterSelection.name);
+      if (!selectedAccObj) return String(adj.accountId) === String(activeFilterSelection.name);
+      return String(adj.accountId) === String(selectedAccObj.id) || String(adj.accountId) === activeFilterSelection.name;
+    } else if (activeFilterSelection.type === 'group') {
+      const groupAccountIds = accounts
+        .filter(a => a.groupName === activeFilterSelection.name)
+        .map(a => String(a.id));
+      return groupAccountIds.includes(String(adj.accountId));
     }
     return true;
   });
@@ -204,6 +259,17 @@ export default function DayViewPage() {
   const monthlyWins = monthlyTrades.filter(t => t.status === 'WIN').length;
   const monthlyWinRate = monthlyTrades.length > 0 ? ((monthlyWins / monthlyTrades.length) * 100).toFixed(1) : '0';
 
+  // Monthly Adjustments (Filtered to active month view)
+  const monthAdjustments = filteredAdjustments.filter(a => a.date && a.date.startsWith(monthPrefix));
+  const monthlyWithdrawals = monthAdjustments
+    .filter(a => a.type === 'withdrawal')
+    .reduce((sum, a) => sum + Number(a.amount), 0);
+  const monthlyDeposits = monthAdjustments
+    .filter(a => a.type === 'deposit')
+    .reduce((sum, a) => sum + Number(a.amount), 0);
+
+  const netBalanceAfterAdjustments = monthlyNetPnL + monthlyDeposits - monthlyWithdrawals;
+
   const dailyPnLs: Record<string, number> = {};
   monthlyTrades.forEach(t => {
     dailyPnLs[t.openDate] = (dailyPnLs[t.openDate] || 0) + (t.netPnL || 0);
@@ -230,7 +296,7 @@ export default function DayViewPage() {
     const dayNum = i + 1;
     const dateStr = formatDateStr(currentYear, currentMonth, dayNum);
     const dateObj = new Date(currentYear, currentMonth, dayNum);
-    const dayOfWeek = dateObj.getDay(); // 0 (Sun) to 6 (Sat)
+    const dayOfWeek = dateObj.getDay();
     return { dayNum, dateStr, dayOfWeek };
   });
 
@@ -294,24 +360,42 @@ export default function DayViewPage() {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm">
+        
+        {/* MONTHLY NET P&L CARD WITH BALANCE BREAKDOWN */}
+        <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm flex flex-col justify-between">
           <p className="text-xs font-semibold text-slate-400 mb-1">{monthNames[currentMonth]} Net P&L</p>
-          <p className={`text-2xl font-black ${monthlyNetPnL >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-            ${monthlyNetPnL.toFixed(2)}
-          </p>
+          <div>
+            <p className={`text-2xl font-black ${monthlyNetPnL >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+              ${monthlyNetPnL.toFixed(2)}
+            </p>
+
+            {(monthlyWithdrawals > 0 || monthlyDeposits > 0) && (
+              <div className="text-[11px] font-bold mt-1 flex items-center gap-1">
+                <span className="text-slate-400">Bal:</span>
+                <span className={netBalanceAfterAdjustments >= 0 ? "text-emerald-600/80 font-mono" : "text-rose-600/80 font-mono"}>
+                  ${netBalanceAfterAdjustments.toFixed(2)}
+                </span>
+                {monthlyWithdrawals > 0 && (
+                  <span className="text-rose-500/80 text-[10px] font-semibold flex items-center">
+                    <ArrowDownRight className="w-3 h-3" />-${monthlyWithdrawals.toFixed(2)}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
-        <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm">
+        <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm flex flex-col justify-between">
           <p className="text-xs font-semibold text-slate-400 mb-1">Win Rate</p>
           <p className="text-2xl font-black text-slate-900">{monthlyWinRate}%</p>
         </div>
 
-        <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm">
+        <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm flex flex-col justify-between">
           <p className="text-xs font-semibold text-slate-400 mb-1">Best Trading Day</p>
           <p className="text-2xl font-black text-emerald-500">${bestDayPnL.toFixed(2)}</p>
         </div>
 
-        <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm">
+        <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm flex flex-col justify-between">
           <p className="text-xs font-semibold text-slate-400 mb-1">Green Days</p>
           <p className="text-2xl font-black text-emerald-500">{greenDaysCount}</p>
         </div>
