@@ -21,7 +21,8 @@ import {
   ArrowDown,
   ExternalLink,
   GripHorizontal,
-  Wallet
+  Wallet,
+  ArrowDownRight
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import AddTradeModal from '@/components/AddTradeModal';
@@ -33,6 +34,15 @@ interface ColumnConfig {
   id: string;
   label: string;
   sortable?: boolean;
+}
+
+interface AccountAdjustment {
+  id?: string | number;
+  accountId: string | number;
+  type: 'deposit' | 'withdrawal';
+  amount: number;
+  date: string;
+  note?: string;
 }
 
 const INITIAL_COLUMNS: ColumnConfig[] = [
@@ -58,6 +68,7 @@ export default function TradeViewPage() {
   const [savedStrategies, setSavedStrategies] = useState<any[]>([]);
   const [savedSetups, setSavedSetups] = useState<any[]>([]);
   const [savedMistakes, setSavedMistakes] = useState<any[]>([]);
+  const [adjustments, setAdjustments] = useState<AccountAdjustment[]>([]);
 
   const fetchCloudData = async () => {
     const trades = await cloudDb.getTrades();
@@ -71,6 +82,34 @@ export default function TradeViewPage() {
     setSavedStrategies(strats);
     setSavedSetups(setupsList);
     setSavedMistakes(mistakesList);
+
+    // Load Adjustments from Supabase & Dexie
+    let loadedAdjustments: AccountAdjustment[] = [];
+    try {
+      const { supabase } = await import('@/lib/supabase');
+      const { data } = await supabase.from('account_adjustments').select('*');
+      if (data && data.length > 0) {
+        loadedAdjustments = data.map(d => ({
+          id: d.id,
+          accountId: d.account_id,
+          type: d.type === 'deposit' ? 'deposit' : 'withdrawal',
+          amount: Number(d.amount),
+          date: d.date,
+          note: d.note
+        }));
+      }
+    } catch (err) {}
+
+    try {
+      if ((db as any).adjustments) {
+        const localData = await (db as any).adjustments.toArray();
+        if (localData && localData.length > 0 && loadedAdjustments.length === 0) {
+          loadedAdjustments = localData;
+        }
+      }
+    } catch (err) {}
+
+    setAdjustments(loadedAdjustments);
   };
 
   useEffect(() => {
@@ -128,7 +167,7 @@ export default function TradeViewPage() {
   useEffect(() => {
     const handleAccountFilterChanged = (e: any) => {
       const detail = e.detail;
-      if (detail === 'All Accounts') {
+      if (detail === 'All Accounts' || !detail) {
         setActiveFilterSelection({ type: 'global', name: 'All Accounts' });
       } else if (typeof detail === 'object' && detail.type === 'group') {
         setActiveFilterSelection({ type: 'group', name: detail.name });
@@ -138,6 +177,7 @@ export default function TradeViewPage() {
           name: typeof detail === 'object' ? detail.name : detail 
         });
       }
+      fetchCloudData();
     };
 
     window.addEventListener('account-filter-changed', handleAccountFilterChanged);
@@ -192,6 +232,21 @@ export default function TradeViewPage() {
     }
     if (endDate && trade.openDate > endDate) {
       return false;
+    }
+    return true;
+  });
+
+  // Filter adjustments based on active sidebar account/group selection
+  const filteredAdjustments = adjustments.filter(adj => {
+    if (activeFilterSelection.type === 'account') {
+      const selectedAccObj = accounts.find(a => a.name === activeFilterSelection.name);
+      if (!selectedAccObj) return String(adj.accountId) === String(activeFilterSelection.name);
+      return String(adj.accountId) === String(selectedAccObj.id) || String(adj.accountId) === activeFilterSelection.name;
+    } else if (activeFilterSelection.type === 'group') {
+      const groupAccountIds = accounts
+        .filter(a => a.groupName === activeFilterSelection.name)
+        .map(a => String(a.id));
+      return groupAccountIds.includes(String(adj.accountId));
     }
     return true;
   });
@@ -324,7 +379,7 @@ export default function TradeViewPage() {
     setEndDate('');
   };
 
-  // Drag and Drop Column Handlers with Boundary Indicator
+  // Drag and Drop Column Handlers
   const handleDragStart = (e: React.DragEvent, id: string) => {
     setDraggedColumnId(id);
     e.dataTransfer.effectAllowed = 'move';
@@ -385,6 +440,17 @@ export default function TradeViewPage() {
   const avgWin = winCount > 0 ? grossWins / winCount : 0;
   const avgLoss = lossCount > 0 ? grossLosses / lossCount : 0;
   const avgWinLossRatio = avgLoss > 0 ? (avgWin / avgLoss).toFixed(2) : '0.00';
+
+  // Adjustment Calculations (Withdrawals & Deposits)
+  const totalWithdrawals = filteredAdjustments
+    .filter(a => a.type === 'withdrawal')
+    .reduce((sum, a) => sum + Number(a.amount), 0);
+
+  const totalDeposits = filteredAdjustments
+    .filter(a => a.type === 'deposit')
+    .reduce((sum, a) => sum + Number(a.amount), 0);
+
+  const netBalanceAfterAdjustments = totalPnL + totalDeposits - totalWithdrawals;
 
   const hasActiveFilters = filterSymbol || filterSide !== 'ALL' || filterStatus !== 'ALL' || startDate || endDate;
 
@@ -549,7 +615,7 @@ export default function TradeViewPage() {
       {/* UNIFORMLY ALIGNED KPI CARDS */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
         
-        {/* CARD 1: Net cumulative P&L */}
+        {/* CARD 1: Net cumulative P&L with Balance Breakdown */}
         <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm flex flex-col justify-between h-36">
           <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
             <span>Net cumulative P&L</span>
@@ -562,8 +628,24 @@ export default function TradeViewPage() {
               </div>
             </div>
           </div>
-          <div className={`text-3xl font-black ${totalPnL >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-            {totalPnL >= 0 ? `$${totalPnL.toFixed(2)}` : `-$${Math.abs(totalPnL).toFixed(2)}`}
+          <div>
+            <div className={`text-3xl font-black ${totalPnL >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+              {totalPnL >= 0 ? `$${totalPnL.toFixed(2)}` : `-$${Math.abs(totalPnL).toFixed(2)}`}
+            </div>
+
+            {(totalWithdrawals > 0 || totalDeposits > 0) && (
+              <div className="text-[11px] font-bold mt-1 flex items-center gap-1">
+                <span className="text-slate-400">Bal:</span>
+                <span className={netBalanceAfterAdjustments >= 0 ? "text-emerald-600/80 font-mono" : "text-rose-600/80 font-mono"}>
+                  ${netBalanceAfterAdjustments.toFixed(2)}
+                </span>
+                {totalWithdrawals > 0 && (
+                  <span className="text-rose-500/80 text-[10px] font-semibold flex items-center">
+                    <ArrowDownRight className="w-3 h-3" />-${totalWithdrawals.toFixed(2)}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
           <div className="text-[10px] text-transparent select-none">spacer</div>
         </div>
