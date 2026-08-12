@@ -13,9 +13,20 @@ import {
   Clock,
   Download,
   TrendingUp,
-  TrendingDown 
+  TrendingDown,
+  ArrowDownRight,
+  ArrowUpRight
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+
+interface AccountAdjustment {
+  id?: string | number;
+  accountId: string | number;
+  type: 'deposit' | 'withdrawal';
+  amount: number;
+  date: string;
+  note?: string;
+}
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -30,19 +41,49 @@ export default function DashboardPage() {
   const [accounts, setAccounts] = useState<any[]>([]);
   const [strategies, setStrategies] = useState<any[]>([]);
   const [mistakeTagsList, setMistakeTagsList] = useState<any[]>([]);
+  const [adjustments, setAdjustments] = useState<AccountAdjustment[]>([]);
+
+  const loadData = async () => {
+    const tradesData = await cloudDb.getTrades();
+    const accountsData = await cloudDb.getAccounts();
+    const strats = await db.strategies.toArray();
+    const mistakesList = await db.mistakes.toArray();
+
+    setRawTrades(tradesData);
+    setAccounts(accountsData);
+    setStrategies(strats);
+    setMistakeTagsList(mistakesList);
+
+    // Load Adjustments from Supabase & Dexie
+    let loadedAdjustments: AccountAdjustment[] = [];
+    try {
+      const { supabase } = await import('@/lib/supabase');
+      const { data } = await supabase.from('account_adjustments').select('*');
+      if (data && data.length > 0) {
+        loadedAdjustments = data.map(d => ({
+          id: d.id,
+          accountId: d.account_id,
+          type: d.type,
+          amount: Number(d.amount),
+          date: d.date,
+          note: d.note
+        }));
+      }
+    } catch (err) {}
+
+    try {
+      if ((db as any).adjustments) {
+        const localData = await (db as any).adjustments.toArray();
+        if (localData && localData.length > 0 && loadedAdjustments.length === 0) {
+          loadedAdjustments = localData;
+        }
+      }
+    } catch (err) {}
+
+    setAdjustments(loadedAdjustments);
+  };
 
   useEffect(() => {
-    async function loadData() {
-      const tradesData = await cloudDb.getTrades();
-      const accountsData = await cloudDb.getAccounts();
-      const strats = await db.strategies.toArray();
-      const mistakesList = await db.mistakes.toArray();
-
-      setRawTrades(tradesData);
-      setAccounts(accountsData);
-      setStrategies(strats);
-      setMistakeTagsList(mistakesList);
-    }
     loadData();
   }, []);
 
@@ -50,7 +91,7 @@ export default function DashboardPage() {
   useEffect(() => {
     const handleAccountFilterChanged = (e: any) => {
       const detail = e.detail;
-      if (detail === 'All Accounts') {
+      if (detail === 'All Accounts' || !detail) {
         setActiveFilterSelection({ type: 'global', name: 'All Accounts' });
       } else if (typeof detail === 'object' && detail.type === 'group') {
         setActiveFilterSelection({ type: 'group', name: detail.name });
@@ -60,6 +101,7 @@ export default function DashboardPage() {
           name: typeof detail === 'object' ? detail.name : detail 
         });
       }
+      loadData();
     };
 
     window.addEventListener('account-filter-changed', handleAccountFilterChanged);
@@ -79,16 +121,27 @@ export default function DashboardPage() {
     return true;
   });
 
-  // Active validation sets
-  const activeStrategies = new Set(strategies.map(s => s.name));
-  const activeMistakes = new Set(mistakeTagsList.map(m => m.name));
+  // Filter adjustments based on active sidebar account/group selection
+  const filteredAdjustments = adjustments.filter(adj => {
+    if (activeFilterSelection.type === 'account') {
+      const selectedAccObj = accounts.find(a => a.name === activeFilterSelection.name);
+      if (!selectedAccObj) return String(adj.accountId) === String(activeFilterSelection.name);
+      return String(adj.accountId) === String(selectedAccObj.id) || String(adj.accountId) === activeFilterSelection.name;
+    } else if (activeFilterSelection.type === 'group') {
+      const groupAccountIds = accounts
+        .filter(a => a.groupName === activeFilterSelection.name)
+        .map(a => String(a.id));
+      return groupAccountIds.includes(String(adj.accountId));
+    }
+    return true;
+  });
 
   // Hover state for interactive equity curve
   const [hoveredPointIndex, setHoveredPointIndex] = useState<number | null>(null);
   const accountName = activeFilterSelection.name;
 
-  // Calculations
-  const totalPnL = trades.reduce((acc, t) => acc + (t.netPnL || 0), 0);
+  // Trading Calculations
+  const grossTradePnL = trades.reduce((acc, t) => acc + (t.netPnL || 0), 0);
   const winTrades = trades.filter(t => (t.netPnL || 0) > 0);
   const lossTrades = trades.filter(t => (t.netPnL || 0) < 0);
   const winRate = trades.length > 0 ? ((winTrades.length / trades.length) * 100).toFixed(1) : '0';
@@ -96,6 +149,18 @@ export default function DashboardPage() {
   const grossWins = winTrades.reduce((acc, t) => acc + t.netPnL, 0);
   const grossLosses = Math.abs(lossTrades.reduce((acc, t) => acc + t.netPnL, 0));
   const profitFactor = grossLosses > 0 ? (grossWins / grossLosses).toFixed(2) : grossWins > 0 ? '99.00' : '0.00';
+
+  // Adjustment Totals (Withdrawals & Deposits)
+  const totalWithdrawals = filteredAdjustments
+    .filter(a => a.type === 'withdrawal')
+    .reduce((acc, a) => acc + a.amount, 0);
+
+  const totalDeposits = filteredAdjustments
+    .filter(a => a.type === 'deposit')
+    .reduce((acc, a) => acc + a.amount, 0);
+
+  // Net P&L After Adjustments
+  const netPnLAfterWithdrawals = grossTradePnL + totalDeposits - totalWithdrawals;
 
   // Mistake Impact Analytics
   const mistakeMap: Record<string, { count: number; totalCost: number }> = {};
@@ -130,7 +195,7 @@ export default function DashboardPage() {
     .sort((a, b) => new Date(`${b.openDate} ${b.entryTime || '00:00'}`).getTime() - new Date(`${a.openDate} ${a.entryTime || '00:00'}`).getTime())
     .slice(0, 5);
 
-  // Market Session Breakdown (Central Time - CME RTH: 8:30 AM to 3:00 PM CT)
+  // Market Session Breakdown
   const sessionMap: Record<string, { count: number; pnl: number }> = {
     'RTH AM': { count: 0, pnl: 0 },
     'RTH PM': { count: 0, pnl: 0 },
@@ -168,20 +233,37 @@ export default function DashboardPage() {
     }
   });
 
-  // Build Chronological Cumulative P&L History for Interactive Equity Curve SVG
-  const chronologicalTrades = [...trades].sort((a, b) => {
-    const dateA = new Date(`${a.openDate} ${a.entryTime || '00:00'}`).getTime();
-    const dateB = new Date(`${b.openDate} ${b.entryTime || '00:00'}`).getTime();
-    return dateA - dateB;
-  });
+  // Interleave Trades and Adjustments Chronologically for Equity Curve
+  const combinedEvents = [
+    ...trades.map(t => ({
+      date: t.openDate,
+      time: t.entryTime || '00:00',
+      pnlDelta: t.netPnL || 0,
+      symbol: t.symbol,
+      type: 'trade'
+    })),
+    ...filteredAdjustments.map(a => ({
+      date: a.date,
+      time: '23:59',
+      pnlDelta: a.type === 'deposit' ? a.amount : -a.amount,
+      symbol: a.type === 'deposit' ? 'Deposit (+)' : 'Withdrawal (-)',
+      type: 'adjustment'
+    }))
+  ].sort((a, b) => new Date(`${a.date} ${a.time}`).getTime() - new Date(`${b.date} ${b.time}`).getTime());
 
   let runningSum = 0;
-  const cumulativePoints = chronologicalTrades.map(t => {
-    runningSum += (t.netPnL || 0);
-    return { pnl: runningSum, date: t.openDate, symbol: t.symbol, tradePnL: t.netPnL };
+  const cumulativePoints = combinedEvents.map(e => {
+    runningSum += e.pnlDelta;
+    return { 
+      pnl: runningSum, 
+      date: e.date, 
+      symbol: e.symbol, 
+      tradePnL: e.pnlDelta,
+      isAdjustment: e.type === 'adjustment'
+    };
   });
 
-  const equityData = [{ pnl: 0, date: 'Start', symbol: 'Baseline', tradePnL: 0 }, ...cumulativePoints];
+  const equityData = [{ pnl: 0, date: 'Start', symbol: 'Baseline', tradePnL: 0, isAdjustment: false }, ...cumulativePoints];
   const minVal = Math.min(...equityData.map(d => d.pnl), 0);
   const maxVal = Math.max(...equityData.map(d => d.pnl), 10);
   const range = maxVal - minVal || 1;
@@ -269,13 +351,32 @@ export default function DashboardPage() {
 
       {/* KPI Cards (Hidden in Print) */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 print:hidden">
+        
+        {/* Net P&L Card with Withdrawals Breakdown */}
         <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-sm flex flex-col justify-between h-32">
           <div className="text-sm font-semibold text-slate-500 flex items-center justify-between">
             <span>Net P&L</span>
             <DollarSign className="w-4 h-4 text-slate-400" />
           </div>
-          <div className={`text-3xl font-bold ${totalPnL >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-            {totalPnL >= 0 ? `$${totalPnL.toFixed(2)}` : `-$${Math.abs(totalPnL).toFixed(2)}`}
+          <div>
+            <div className={`text-3xl font-bold ${grossTradePnL >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+              {grossTradePnL >= 0 ? `$${grossTradePnL.toFixed(2)}` : `-$${Math.abs(grossTradePnL).toFixed(2)}`}
+            </div>
+            
+            {/* Secondary Net P&L Indicator showing impact of withdrawals */}
+            {(totalWithdrawals > 0 || totalDeposits > 0) && (
+              <div className="text-[11px] font-bold mt-1 flex items-center gap-1">
+                <span className="text-slate-400">Bal:</span>
+                <span className={netPnLAfterWithdrawals >= 0 ? "text-emerald-600/80 font-mono" : "text-rose-600/80 font-mono"}>
+                  ${netPnLAfterWithdrawals.toFixed(2)}
+                </span>
+                {totalWithdrawals > 0 && (
+                  <span className="text-rose-500/80 text-[10px] font-semibold flex items-center">
+                    <ArrowDownRight className="w-3 h-3" />-${totalWithdrawals.toFixed(2)}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -304,12 +405,12 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* EQUITY CURVE WITH ATH & ATL WATERMARKS */}
+      {/* EQUITY CURVE WITH ATH & ATL WATERMARKS AND WITHDRAWAL GAPS */}
       <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm p-6 space-y-4 w-full print:hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
           <div>
             <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Equity Curve Performance</h2>
-            <p className="text-[11px] text-slate-400">Hover across the chart to inspect chronological balance milestones</p>
+            <p className="text-[11px] text-slate-400">Hover across the chart to inspect chronological balance milestones & payouts</p>
           </div>
           
           {/* ATH & ATL Water Marks Badges */}
@@ -340,7 +441,7 @@ export default function DashboardPage() {
         <div className="w-full h-96 relative">
           {pointsCoordinates.length < 2 ? (
             <div className="h-full flex items-center justify-center text-slate-400 text-xs font-medium">
-              Log at least 2 trades to render interactive equity curve.
+              Log at least 2 trades or adjustments to render interactive equity curve.
             </div>
           ) : (
             <svg 
@@ -383,8 +484,20 @@ export default function DashboardPage() {
               {pointsCoordinates.map((p, idx) => {
                 if (idx === 0) return null;
                 const prev = pointsCoordinates[idx - 1];
-                const strokeColor = p.pnl >= 0 ? '#10b981' : '#f43f5e';
-                return <line key={idx} x1={prev.x} y1={prev.y} x2={p.x} y2={p.y} stroke={strokeColor} strokeWidth="3" strokeLinecap="round" />;
+                const strokeColor = p.isAdjustment ? '#8b5cf6' : (p.pnl >= 0 ? '#10b981' : '#f43f5e');
+                return (
+                  <line 
+                    key={idx} 
+                    x1={prev.x} 
+                    y1={prev.y} 
+                    x2={p.x} 
+                    y2={p.y} 
+                    stroke={strokeColor} 
+                    strokeWidth={p.isAdjustment ? "2.5" : "3"} 
+                    strokeDasharray={p.isAdjustment ? "4 3" : undefined}
+                    strokeLinecap="round" 
+                  />
+                );
               })}
 
               {activeIndex !== null && pointsCoordinates[activeIndex] && (
@@ -400,8 +513,8 @@ export default function DashboardPage() {
                     key={idx}
                     cx={p.x} 
                     cy={p.y} 
-                    r={activeIndex === idx ? 8 : (isAth || isAtl ? 6 : 4.5)} 
-                    fill={p.pnl >= 0 ? '#10b981' : '#f43f5e'} 
+                    r={activeIndex === idx ? 8 : (p.isAdjustment ? 6 : (isAth || isAtl ? 6 : 4.5))} 
+                    fill={p.isAdjustment ? '#8b5cf6' : (p.pnl >= 0 ? '#10b981' : '#f43f5e')} 
                     stroke="#ffffff"
                     strokeWidth="2.5"
                   />
@@ -493,9 +606,9 @@ export default function DashboardPage() {
         {/* Compact KPI Grid */}
         <div className="grid grid-cols-4 gap-3">
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5">
-            <span className="text-[9px] font-bold text-slate-400 uppercase">Net P&L</span>
-            <div className={`text-lg font-black ${totalPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-              {totalPnL >= 0 ? `$${totalPnL.toFixed(2)}` : `-$${Math.abs(totalPnL).toFixed(2)}`}
+            <span className="text-[9px] font-bold text-slate-400 uppercase">Gross P&L</span>
+            <div className={`text-lg font-black ${grossTradePnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+              {grossTradePnL >= 0 ? `$${grossTradePnL.toFixed(2)}` : `-$${Math.abs(grossTradePnL).toFixed(2)}`}
             </div>
           </div>
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5">
@@ -541,7 +654,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Executed Trades Summary Table (Last 5 or fewer) */}
+        {/* Executed Trades Summary Table */}
         <div className="space-y-1.5">
           <h3 className="text-[10px] font-bold text-slate-900 uppercase tracking-wider">Executed Trades Summary ({reportTrades.length} Recent)</h3>
           <div className="border border-slate-200 rounded-lg overflow-hidden">
