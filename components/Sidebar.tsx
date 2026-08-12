@@ -19,16 +19,26 @@ import {
   Edit2,
   ChevronLeft,
   Menu,
-  LogOut
+  LogOut,
+  History,
+  DollarSign
 } from 'lucide-react';
 import { cloudDb } from '@/lib/cloudDb';
 import { TradingAccount } from '@/lib/db';
 import AccountModal from '@/components/AccountModal';
-import AddTradeModal from '@/components/AddTradeModal';
 
 interface SidebarLayoutProps {
   children?: React.ReactNode;
   onOpenAddTrade?: () => void;
+}
+
+interface AccountAdjustment {
+  id?: string | number;
+  accountId: string | number;
+  type: 'deposit' | 'withdrawal';
+  amount: number;
+  date: string;
+  note?: string;
 }
 
 export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps) {
@@ -61,22 +71,53 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [editingAccount, setEditingAccount] = useState<TradingAccount | null>(null);
 
-  // Balance Modification State inside Account Manager per account card
-  const [modifyingAccountId, setModifyingAccountId] = useState<number | string | null>(null);
-  const [modAmount, setModAmount] = useState('');
-  const [modType, setModType] = useState<'deposit' | 'withdrawal'>('deposit');
+  // Adjustments Log state
+  const [adjustments, setAdjustments] = useState<AccountAdjustment[]>([]);
+  const [adjType, setAdjType] = useState<'deposit' | 'withdrawal'>('withdrawal');
+  const [adjAmount, setAdjAmount] = useState<string>('');
+  const [adjDate, setAdjDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [adjNote, setAdjNote] = useState<string>('');
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isAccountManagerOpen) {
         setIsAccountManagerOpen(false);
         setEditingAccount(null);
-        setModifyingAccountId(null);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isAccountManagerOpen]);
+
+  // Load adjustments for editing account
+  useEffect(() => {
+    async function loadAdjustments() {
+      if (editingAccount?.id) {
+        const { supabase } = await import('@/lib/supabase');
+        const { data } = await supabase
+          .from('account_adjustments')
+          .select('*')
+          .eq('account_id', editingAccount.id)
+          .order('date', { ascending: false });
+        if (data) {
+          setAdjustments(data.map(d => ({
+            id: d.id,
+            accountId: d.account_id,
+            type: d.type,
+            amount: Number(d.amount),
+            date: d.date,
+            note: d.note
+          })));
+        }
+      } else {
+        setAdjustments([]);
+      }
+    }
+    loadAdjustments();
+  }, [editingAccount]);
+
+  const existingGroupNames = Array.from(new Set(accounts.map(a => a.groupName).filter(Boolean)));
+  const existingFirms = Array.from(new Set(accounts.map(a => a.firm).filter(Boolean)));
 
   const handleDeleteAccount = async (id?: number | string) => {
     if (!id) return;
@@ -105,25 +146,43 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
     setEditingAccount(null);
     const data = await cloudDb.getAccounts();
     setAccounts(data);
+    window.dispatchEvent(new CustomEvent('account-filter-changed'));
   };
 
-  const handleModifyBalance = async (e: React.FormEvent, acc: TradingAccount) => {
+  const handleAddAdjustment = async (e: React.FormEvent) => {
     e.preventDefault();
-    const val = parseFloat(modAmount);
-    if (isNaN(val) || val <= 0 || !acc.id) return;
-
-    const adjustment = modType === 'deposit' ? val : -val;
-    const newBalance = acc.balance + adjustment;
+    const parsedAmount = parseFloat(adjAmount);
+    if (!editingAccount?.id || isNaN(parsedAmount) || parsedAmount <= 0) return;
 
     const { supabase } = await import('@/lib/supabase');
-    await supabase.from('accounts').update({
-      balance: newBalance
-    }).eq('id', acc.id);
+    const { data, error } = await supabase.from('account_adjustments').insert({
+      account_id: editingAccount.id,
+      type: adjType,
+      amount: parsedAmount,
+      date: adjDate,
+      note: adjNote
+    }).select().single();
 
-    setModifyingAccountId(null);
-    setModAmount('');
-    const data = await cloudDb.getAccounts();
-    setAccounts(data);
+    if (!error && data) {
+      setAdjustments(prev => [{
+        id: data.id,
+        accountId: data.account_id,
+        type: data.type,
+        amount: Number(data.amount),
+        date: data.date,
+        note: data.note
+      }, ...prev]);
+      setAdjAmount('');
+      setAdjNote('');
+      window.dispatchEvent(new CustomEvent('account-filter-changed'));
+    }
+  };
+
+  const handleDeleteAdjustment = async (adjId?: number | string) => {
+    if (!adjId) return;
+    const { supabase } = await import('@/lib/supabase');
+    await supabase.from('account_adjustments').delete().eq('id', adjId);
+    setAdjustments(prev => prev.filter(a => a.id !== adjId));
     window.dispatchEvent(new CustomEvent('account-filter-changed'));
   };
 
@@ -218,7 +277,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
             <div className="relative">
               <button 
                 onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                className="w-full bg-slate-50 border border-slate-200 hover:bg-slate-100/80 p-2.5 rounded-xl flex items-center justify-between text-xs font-bold text-slate-700 transition cursor-pointer"
+                className="w-full bg-slate-50 border border-slate-200 hover:bg-slate-100/80 p-2.5 rounded-xl flex items-center justify-between text-xs font-bold text-slate-900 transition cursor-pointer"
               >
                 <div className="flex items-center gap-2 truncate">
                   <Layers className="w-3.5 h-3.5 text-[#ec3044]" />
@@ -236,7 +295,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                       window.dispatchEvent(new CustomEvent('account-filter-changed', { detail: 'All Accounts' }));
                     }}
                     className={`w-full text-left px-3 py-2 text-xs font-semibold flex items-center justify-between hover:bg-slate-50 transition ${
-                      selectedAccount === 'All Accounts' ? 'text-[#ec3044] bg-[#ec3044]/5 font-bold' : 'text-slate-600'
+                      selectedAccount === 'All Accounts' ? 'text-[#ec3044] bg-[#ec3044]/5 font-bold' : 'text-slate-800'
                     }`}
                   >
                     <span>All Accounts</span>
@@ -269,7 +328,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                                 setIsDropdownOpen(false);
                                 window.dispatchEvent(new CustomEvent('account-filter-changed', { detail: { type: 'group', name: groupName } }));
                               }}
-                              className="text-[9px] font-bold text-slate-500 hover:text-[#ec3044] px-2 py-0.5 rounded bg-white border border-slate-200 transition cursor-pointer"
+                              className="text-[9px] font-bold text-slate-700 hover:text-[#ec3044] px-2 py-0.5 rounded bg-white border border-slate-200 transition cursor-pointer"
                             >
                               Select Group
                             </button>
@@ -286,11 +345,11 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                                       window.dispatchEvent(new CustomEvent('account-filter-changed', { detail: { type: 'account', name: acc.name } }));
                                     }}
                                     className={`text-left text-xs font-semibold flex-1 truncate pr-2 ${
-                                      selectedAccount === acc.name ? 'text-[#ec3044] font-bold' : 'text-slate-600'
+                                      selectedAccount === acc.name ? 'text-[#ec3044] font-bold' : 'text-slate-800'
                                     }`}
                                   >
                                     <div className="truncate">{acc.name}</div>
-                                    <div className="text-[9px] text-slate-400">{acc.firm} • <span className="font-mono">${acc.balance.toLocaleString()}</span></div>
+                                    <div className="text-[9px] text-slate-500">{acc.firm} • <span className="font-mono font-bold">${acc.balance.toLocaleString()}</span></div>
                                   </button>
                                   <button
                                     onClick={(e) => {
@@ -326,7 +385,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                         setIsDropdownOpen(false);
                         setIsAccountManagerOpen(true);
                       }}
-                      className="w-full text-center py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition flex items-center justify-center gap-1.5 cursor-pointer"
+                      className="w-full text-center py-2 text-xs font-bold text-slate-800 hover:bg-slate-100 rounded-lg transition flex items-center justify-center gap-1.5 cursor-pointer"
                     >
                       <Settings className="w-3.5 h-3.5" /> Open Account Manager
                     </button>
@@ -364,7 +423,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                   } ${
                     isActive
                       ? 'bg-[#ec3044]/10 text-[#ec3044]'
-                      : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                      : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
                   }`}
                 >
                   <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-[#ec3044]' : 'text-slate-400'}`} />
@@ -395,7 +454,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
               setIsCollapsed(nextState);
               window.dispatchEvent(new CustomEvent('sidebar-collapse-changed', { detail: nextState }));
             }}
-            className={`w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition cursor-pointer ${
+            className={`w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition cursor-pointer ${
               isCollapsed ? 'px-0' : 'px-3'
             }`}
             title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
@@ -419,26 +478,24 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
           onClick={() => {
             setIsAccountManagerOpen(false);
             setEditingAccount(null);
-            setModifyingAccountId(null);
           }}
           className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex justify-end"
         >
           <div 
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md bg-white h-full shadow-2xl p-6 flex flex-col justify-between animate-in slide-in-from-right duration-200"
+            className="w-full max-w-lg bg-white h-full shadow-2xl p-6 flex flex-col justify-between animate-in slide-in-from-right duration-200"
           >
             
             <div className="space-y-6 overflow-y-auto flex-1 pr-1">
               <div className="flex items-center justify-between border-b border-slate-100 pb-4">
                 <div>
-                  <h2 className="text-base font-bold text-slate-900">Account Manager</h2>
-                  <p className="text-xs text-slate-400">Manage, edit, balance track, and delete accounts & groups</p>
+                  <h2 className="text-base font-black text-slate-900">Account Manager</h2>
+                  <p className="text-xs text-slate-500 font-medium">Manage, edit, balance track, and delete accounts & groups</p>
                 </div>
                 <button 
                   onClick={() => {
                     setIsAccountManagerOpen(false);
                     setEditingAccount(null);
-                    setModifyingAccountId(null);
                   }}
                   className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
                 >
@@ -447,58 +504,85 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
               </div>
 
               {editingAccount ? (
-                <form onSubmit={handleUpdateAccount} className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
-                  <h3 className="text-xs font-bold text-slate-900 uppercase">Edit Account</h3>
+                <form onSubmit={handleUpdateAccount} className="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                    <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Edit Account Details</h3>
+                    <span className="text-[10px] font-bold text-slate-400 font-mono">ID: {editingAccount.id}</span>
+                  </div>
+
+                  {/* Account Name */}
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Account Name</label>
+                    <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">Account Name</label>
                     <input 
                       type="text" 
                       value={editingAccount.name} 
                       onChange={e => setEditingAccount({ ...editingAccount, name: e.target.value })}
-                      className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-semibold"
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#ec3044]"
+                      placeholder="e.g. 001"
                       required
                     />
                   </div>
+
+                  {/* Account Group Name (Dropdown + Custom Input) */}
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Account Group Name</label>
+                    <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">Account Group Name</label>
                     <input 
                       type="text" 
+                      list="existing-group-list"
                       value={editingAccount.groupName} 
                       onChange={e => setEditingAccount({ ...editingAccount, groupName: e.target.value })}
-                      className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-semibold"
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#ec3044]"
+                      placeholder="Select or enter group name (e.g. Lucid)"
                       required
                     />
+                    <datalist id="existing-group-list">
+                      {existingGroupNames.map(g => (
+                        <option key={g} value={g} />
+                      ))}
+                    </datalist>
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+
+                  <div className="grid grid-cols-2 gap-3">
+                    {/* Type */}
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Type</label>
+                      <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">Type</label>
                       <select 
                         value={editingAccount.type} 
                         onChange={e => setEditingAccount({ ...editingAccount, type: e.target.value as any })}
-                        className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-semibold"
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#ec3044]"
                       >
                         <option value="Live">Live</option>
                         <option value="Eval">Eval</option>
                         <option value="Funded">Funded</option>
                       </select>
                     </div>
+
+                    {/* Broker / Firm (Dropdown + Custom Input) */}
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Broker / Firm</label>
+                      <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">Broker / Firm</label>
                       <input 
                         type="text" 
+                        list="existing-firm-list"
                         value={editingAccount.firm} 
                         onChange={e => setEditingAccount({ ...editingAccount, firm: e.target.value })}
-                        className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-semibold"
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#ec3044]"
+                        placeholder="Select or enter firm (e.g. Lucid Trading)"
                       />
+                      <datalist id="existing-firm-list">
+                        {existingFirms.map(f => (
+                          <option key={f} value={f} />
+                        ))}
+                      </datalist>
                     </div>
                   </div>
 
+                  {/* Data Input Type */}
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Data Input Type (Statement Format)</label>
+                    <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">Data Input Type (Statement Format)</label>
                     <select 
                       value={editingAccount.inputType || 'Tradovate'} 
                       onChange={e => setEditingAccount({ ...editingAccount, inputType: e.target.value as any })}
-                      className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-semibold"
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#ec3044]"
                       required
                     >
                       <option value="Tradovate">Tradovate</option>
@@ -506,27 +590,115 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                     </select>
                   </div>
 
+                  {/* Account Size / Balance */}
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Account Size / Balance ($)</label>
+                    <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">Account Size / Balance ($)</label>
                     <input 
                       type="number" 
                       value={editingAccount.balance} 
                       onChange={e => setEditingAccount({ ...editingAccount, balance: parseFloat(e.target.value) || 0 })}
-                      className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-semibold"
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#ec3044]"
                       required
                     />
                   </div>
-                  <div className="flex justify-end gap-2 pt-2">
+
+                  {/* --- ADJUSTMENTS (DEPOSITS & WITHDRAWALS LOG) --- */}
+                  <div className="pt-3 border-t border-slate-200 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                        <History className="w-3.5 h-3.5 text-[#ec3044]" /> Adjustments (Payouts & Deposits)
+                      </label>
+                      <span className="text-[9px] font-bold text-slate-400 uppercase">Audit Log</span>
+                    </div>
+
+                    <div className="grid grid-cols-12 gap-2 bg-white p-3 rounded-xl border border-slate-200">
+                      <div className="col-span-3">
+                        <select 
+                          value={adjType} 
+                          onChange={e => setAdjType(e.target.value as any)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-900"
+                        >
+                          <option value="withdrawal">Withdrawal (-)</option>
+                          <option value="deposit">Deposit (+)</option>
+                        </select>
+                      </div>
+
+                      <div className="col-span-3">
+                        <input 
+                          type="number" 
+                          step="any"
+                          value={adjAmount}
+                          onChange={e => setAdjAmount(e.target.value)}
+                          placeholder="Amount $"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-900"
+                        />
+                      </div>
+
+                      <div className="col-span-4">
+                        <input 
+                          type="date" 
+                          value={adjDate}
+                          onChange={e => setAdjDate(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-900"
+                        />
+                      </div>
+
+                      <div className="col-span-2">
+                        <button 
+                          type="button"
+                          onClick={handleAddAdjustment}
+                          className="w-full h-full bg-[#ec3044] hover:bg-[#d4283b] text-white font-bold rounded-lg text-xs transition cursor-pointer"
+                        >
+                          + Log
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Adjustments History Log Table */}
+                    <div className="max-h-36 overflow-y-auto space-y-1.5">
+                      {adjustments.length === 0 ? (
+                        <p className="text-[10px] text-slate-400 italic text-center py-2">No adjustments logged yet for this account.</p>
+                      ) : (
+                        adjustments.map(adj => (
+                          <div key={adj.id} className="flex items-center justify-between p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold">
+                            <div className="flex items-center gap-2">
+                              <span className={`px-1.5 py-0.5 rounded text-[9px] uppercase font-bold ${
+                                adj.type === 'deposit' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
+                              }`}>
+                                {adj.type}
+                              </span>
+                              <span className="font-mono text-slate-900">
+                                {adj.type === 'deposit' ? '+' : '-'}${adj.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] text-slate-400">{adj.date}</span>
+                              <button 
+                                type="button" 
+                                onClick={() => handleDeleteAdjustment(adj.id)}
+                                className="text-slate-300 hover:text-rose-500 transition cursor-pointer"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2 border-t border-slate-200">
                     <button 
                       type="button" 
                       onClick={() => setEditingAccount(null)}
-                      className="px-3 py-1.5 text-xs font-bold text-slate-500 hover:bg-slate-200 rounded-lg"
+                      className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-xl cursor-pointer"
                     >
                       Cancel
                     </button>
                     <button 
                       type="submit" 
-                      className="px-4 py-1.5 text-xs font-bold bg-[#ec3044] text-white rounded-lg shadow-sm"
+                      className="px-5 py-2 text-xs font-bold bg-[#ec3044] hover:bg-[#d4283b] text-white rounded-xl shadow-sm cursor-pointer"
                     >
                       Save Changes
                     </button>
@@ -535,14 +707,14 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
               ) : (
                 <button 
                   onClick={() => window.dispatchEvent(new CustomEvent('open-add-account'))}
-                  className="w-full py-3 bg-[#ec3044]/15 hover:bg-[#ec3044]/25 text-[#ec3044] font-bold rounded-xl text-xs transition flex items-center justify-center gap-2 cursor-pointer border border-[#ec3044]/25 shadow-sm"
+                  className="w-full py-3 bg-[#ec3044]/10 hover:bg-[#ec3044]/20 text-[#ec3044] font-bold rounded-xl text-xs transition flex items-center justify-center gap-2 cursor-pointer border border-[#ec3044]/25 shadow-xs"
                 >
                   <UserPlus className="w-4 h-4" /> + Create New Account
                 </button>
               )}
 
               <div className="space-y-6 pt-2">
-                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Existing Accounts</h3>
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider">Existing Accounts</h3>
                 
                 {Object.keys(groupedAccounts).length === 0 ? (
                   <p className="text-xs text-slate-400 italic text-center py-6">No accounts created yet.</p>
@@ -552,108 +724,51 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                       {groupIdx > 0 && <hr className="border-t-2 border-[#ec3044] my-4" />}
                       
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-extrabold text-slate-800 uppercase tracking-wide flex items-center gap-1.5">
+                        <span className="text-xs font-extrabold text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
                           <span className="w-2 h-2 rounded-full bg-[#ec3044]"></span>
                           {groupName}
                         </span>
-                        <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
+                        <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
                           {groupAccs.length} account{groupAccs.length === 1 ? '' : 's'}
                         </span>
                       </div>
 
                       <div className="space-y-2">
-                        {groupAccs.map(acc => {
-                          const isModifying = modifyingAccountId === acc.id;
-
-                          return (
-                            <div key={acc.id} className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3 shadow-xs">
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <div className="font-bold text-slate-900 text-xs flex items-center gap-2">
-                                    {acc.name}
-                                    <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
-                                      acc.type === 'Live' ? 'bg-emerald-50 text-emerald-600' : acc.type === 'Funded' ? 'bg-blue-50 text-blue-600' : 'bg-amber-50 text-amber-600'
-                                    }`}>
-                                      {acc.type}
-                                    </span>
-                                  </div>
-                                  <div className="text-[10px] text-slate-500 mt-0.5">
-                                    {acc.firm ? `${acc.firm} • ` : ''}<span className="font-bold text-[#ec3044]">{acc.inputType || 'Tradovate'}</span> • <span className="font-mono font-bold text-slate-900">${acc.balance.toLocaleString()}</span>
-                                  </div>
+                        {groupAccs.map(acc => (
+                          <div key={acc.id} className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3 shadow-xs">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <div className="font-bold text-slate-900 text-xs flex items-center gap-2">
+                                  {acc.name}
+                                  <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
+                                    acc.type === 'Live' ? 'bg-emerald-50 text-emerald-600' : acc.type === 'Funded' ? 'bg-blue-50 text-blue-600' : 'bg-amber-50 text-amber-600'
+                                  }`}>
+                                    {acc.type}
+                                  </span>
                                 </div>
-                                <div className="flex items-center gap-1">
-                                  <button 
-                                    onClick={() => setModifyingAccountId(isModifying ? null : acc.id)}
-                                    className="px-2 py-1 bg-slate-200/80 hover:bg-slate-300 text-slate-700 font-bold rounded-lg text-[10px] transition cursor-pointer"
-                                    title="Deposit or Withdrawal"
-                                  >
-                                    {isModifying ? 'Cancel' : '± Balance'}
-                                  </button>
-                                  <button 
-                                    onClick={() => {
-                                      setEditingAccount(acc);
-                                      setModifyingAccountId(null);
-                                    }}
-                                    className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-lg transition cursor-pointer"
-                                    title="Edit Account Details"
-                                  >
-                                    <Edit2 className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button 
-                                    onClick={() => handleDeleteAccount(acc.id)}
-                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
-                                    title="Delete Account"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
+                                <div className="text-[10px] text-slate-600 font-semibold mt-0.5">
+                                  {acc.firm ? `${acc.firm} • ` : ''}<span className="font-bold text-[#ec3044]">{acc.inputType || 'Tradovate'}</span> • <span className="font-mono font-bold text-slate-900">${acc.balance.toLocaleString()}</span>
                                 </div>
                               </div>
-
-                              {/* Inline Balance Modification Form (Deposit / Withdrawal) */}
-                              {isModifying && (
-                                <form onSubmit={(e) => handleModifyBalance(e, acc)} className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
-                                  <div className="flex justify-between items-center text-[10px] font-bold text-slate-500 uppercase">
-                                    <span>Modify Balance</span>
-                                    <div className="flex gap-1">
-                                      <button
-                                        type="button"
-                                        onClick={() => setModType('deposit')}
-                                        className={`px-2 py-0.5 rounded cursor-pointer ${modType === 'deposit' ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-600'}`}
-                                      >
-                                        Deposit (+)
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => setModType('withdrawal')}
-                                        className={`px-2 py-0.5 rounded cursor-pointer ${modType === 'withdrawal' ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-600'}`}
-                                      >
-                                        Withdrawal (-)
-                                      </button>
-                                    </div>
-                                  </div>
-                                  <div className="flex gap-2">
-                                    <input 
-                                      type="number" 
-                                      step="any"
-                                      value={modAmount} 
-                                      onChange={e => setModAmount(e.target.value)}
-                                      placeholder="Enter amount ($)"
-                                      className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-900"
-                                      required
-                                      autoFocus
-                                    />
-                                    <button 
-                                      type="submit"
-                                      className="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-lg text-xs cursor-pointer"
-                                    >
-                                      Apply
-                                    </button>
-                                  </div>
-                                </form>
-                              )}
+                              <div className="flex items-center gap-1">
+                                <button 
+                                  onClick={() => setEditingAccount(acc)}
+                                  className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-200/60 rounded-lg transition cursor-pointer"
+                                  title="Edit Account Details & Log Adjustments"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                                <button 
+                                  onClick={() => handleDeleteAccount(acc.id)}
+                                  className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                                  title="Delete Account"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             </div>
-                          );
-                        })}
+                          </div>
+                        ))}
                       </div>
 
                     </div>
@@ -668,7 +783,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                 onClick={() => {
                   setIsAccountManagerOpen(false);
                   setEditingAccount(null);
-                  setModifyingAccountId(null);
                 }}
                 className="w-full py-2.5 bg-slate-900 text-white font-bold rounded-xl text-xs shadow-sm cursor-pointer"
               >
