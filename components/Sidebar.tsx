@@ -151,8 +151,12 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
     if (confirm('Are you sure you want to delete this account?')) {
       const { supabase } = await import('@/lib/supabase');
       await supabase.from('accounts').delete().eq('id', id);
+      if (db.accounts) {
+        await db.accounts.delete(Number(id));
+      }
       const data = await cloudDb.getAccounts();
       setAccounts(data);
+      window.dispatchEvent(new CustomEvent('account-filter-changed'));
     }
   };
 
@@ -160,20 +164,43 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
     e.preventDefault();
     if (!editingAccount || !editingAccount.id) return;
 
-    const { supabase } = await import('@/lib/supabase');
-    await supabase.from('accounts').update({
-      name: editingAccount.name,
-      group_name: editingAccount.groupName,
-      type: editingAccount.type,
-      firm: editingAccount.firm,
-      balance: editingAccount.balance,
-      input_type: editingAccount.inputType || 'Tradovate',
-    }).eq('id', editingAccount.id);
+    const updatedAcc = {
+      ...editingAccount,
+      id: Number(editingAccount.id),
+      groupName: editingAccount.groupName,
+      inputType: editingAccount.inputType || 'Tradovate',
+      balance: Number(editingAccount.balance)
+    };
+
+    // 1. Update Local Dexie DB
+    try {
+      if (db.accounts) {
+        await db.accounts.put(updatedAcc);
+      }
+    } catch (err) {
+      console.warn("Dexie account update error:", err);
+    }
+
+    // 2. Update Supabase Remote DB
+    try {
+      const { supabase } = await import('@/lib/supabase');
+      await supabase.from('accounts').update({
+        name: editingAccount.name,
+        group_name: editingAccount.groupName,
+        type: editingAccount.type,
+        firm: editingAccount.firm,
+        balance: Number(editingAccount.balance),
+        input_type: editingAccount.inputType || 'Tradovate',
+      }).eq('id', editingAccount.id);
+    } catch (err) {
+      console.warn("Supabase account update error:", err);
+    }
 
     setEditingAccount(null);
     const data = await cloudDb.getAccounts();
     setAccounts(data);
     window.dispatchEvent(new CustomEvent('account-filter-changed'));
+    window.dispatchEvent(new CustomEvent('open-add-account'));
   };
 
   const handleAddAdjustment = async (e: React.FormEvent) => {
