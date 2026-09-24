@@ -15,7 +15,9 @@ import {
   TrendingUp,
   TrendingDown,
   ArrowDownRight,
-  ArrowUpRight
+  ArrowUpRight,
+  Flag,
+  ShieldAlert
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
@@ -42,6 +44,10 @@ export default function DashboardPage() {
   const [strategies, setStrategies] = useState<any[]>([]);
   const [mistakeTagsList, setMistakeTagsList] = useState<any[]>([]);
   const [adjustments, setAdjustments] = useState<AccountAdjustment[]>([]);
+
+  // Target and Drawdown custom inputs (persisted per account)
+  const [targetInput, setTargetInput] = useState<string>('');
+  const [drawdownInput, setDrawdownInput] = useState<string>('');
 
   const loadData = async () => {
     const tradesData = await cloudDb.getTrades();
@@ -86,6 +92,34 @@ export default function DashboardPage() {
   useEffect(() => {
     loadData();
   }, []);
+
+  // Sync inputs from localStorage when active account changes
+  useEffect(() => {
+    const storageKey = `tryhard_thresholds_${activeFilterSelection.name}`;
+    const saved = localStorage.getItem(storageKey);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        setTargetInput(parsed.target || '');
+        setDrawdownInput(parsed.drawdown || '');
+      } catch (e) {}
+    } else {
+      setTargetInput('');
+      setDrawdownInput('');
+    }
+  }, [activeFilterSelection.name]);
+
+  const handleTargetChange = (val: string) => {
+    setTargetInput(val);
+    const storageKey = `tryhard_thresholds_${activeFilterSelection.name}`;
+    localStorage.setItem(storageKey, JSON.stringify({ target: val, drawdown: drawdownInput }));
+  };
+
+  const handleDrawdownChange = (val: string) => {
+    setDrawdownInput(val);
+    const storageKey = `tryhard_thresholds_${activeFilterSelection.name}`;
+    localStorage.setItem(storageKey, JSON.stringify({ target: targetInput, drawdown: val }));
+  };
 
   // Listen to sidebar account filter changes
   useEffect(() => {
@@ -161,6 +195,39 @@ export default function DashboardPage() {
 
   // Net P&L After Adjustments
   const netPnLAfterWithdrawals = grossTradePnL + totalDeposits - totalWithdrawals;
+
+  // Selected Account baseline detection for Target / Drawdown normalization
+  const currentAccountObj = accounts.find(a => a.name === activeFilterSelection.name);
+  const baselineAccountSize = currentAccountObj?.balance ? Number(currentAccountObj.balance) : 0;
+
+  // Compute clean P&L Deltas for Target and Drawdown
+  let targetPnL: number | null = null;
+  if (targetInput.trim()) {
+    const rawT = parseFloat(targetInput);
+    if (!isNaN(rawT) && rawT !== 0) {
+      if (baselineAccountSize > 0 && rawT > baselineAccountSize) {
+        targetPnL = rawT - baselineAccountSize;
+      } else {
+        targetPnL = Math.abs(rawT);
+      }
+    }
+  }
+
+  let drawdownPnL: number | null = null;
+  if (drawdownInput.trim()) {
+    const rawD = parseFloat(drawdownInput);
+    if (!isNaN(rawD) && rawD !== 0) {
+      if (baselineAccountSize > 0 && rawD > baselineAccountSize * 0.5) {
+        drawdownPnL = -(baselineAccountSize - rawD);
+      } else {
+        drawdownPnL = -Math.abs(rawD);
+      }
+    }
+  }
+
+  // Calculate Distances
+  const distanceToTarget = targetPnL !== null ? targetPnL - netPnLAfterWithdrawals : null;
+  const distanceToDrawdown = drawdownPnL !== null ? netPnLAfterWithdrawals - drawdownPnL : null;
 
   // Mistake Impact Analytics
   const mistakeMap: Record<string, { count: number; totalCost: number }> = {};
@@ -264,8 +331,14 @@ export default function DashboardPage() {
   });
 
   const equityData = [{ pnl: 0, date: 'Start', symbol: 'Baseline', tradePnL: 0, isAdjustment: false }, ...cumulativePoints];
-  const minVal = Math.min(...equityData.map(d => d.pnl), 0);
-  const maxVal = Math.max(...equityData.map(d => d.pnl), 10);
+
+  // Include target & drawdown boundaries in vertical range calculations
+  const allValues = equityData.map(d => d.pnl);
+  if (targetPnL !== null) allValues.push(targetPnL);
+  if (drawdownPnL !== null) allValues.push(drawdownPnL);
+
+  const minVal = Math.min(...allValues, 0);
+  const maxVal = Math.max(...allValues, 10);
   const range = maxVal - minVal || 1;
 
   // SVG viewBox dimensions
@@ -274,9 +347,13 @@ export default function DashboardPage() {
 
   const pointsCoordinates = equityData.map((d, idx) => {
     const x = (idx / (equityData.length - 1 || 1)) * svgWidth;
-    const y = svgHeight - ((d.pnl - minVal) / range) * (svgHeight - 60) - 30;
+    const y = svgHeight - ((d.pnl - minVal) / range) * (svgHeight - 70) - 35;
     return { x, y, ...d };
   });
+
+  // Target and Drawdown Y positions on SVG plane
+  const targetY = targetPnL !== null ? svgHeight - ((targetPnL - minVal) / range) * (svgHeight - 70) - 35 : null;
+  const drawdownY = drawdownPnL !== null ? svgHeight - ((drawdownPnL - minVal) / range) * (svgHeight - 70) - 35 : null;
 
   // Calculate ATH & ATL indices
   let athIndex = 0;
@@ -288,7 +365,7 @@ export default function DashboardPage() {
   const athPoint = pointsCoordinates[athIndex];
   const atlPoint = pointsCoordinates[atlIndex];
 
-  const baselineY = svgHeight - ((0 - minVal) / range) * (svgHeight - 60) - 30;
+  const baselineY = svgHeight - ((0 - minVal) / range) * (svgHeight - 70) - 35;
   const polylineStr = pointsCoordinates.map(p => `${p.x},${p.y}`).join(' ');
 
   const activeIndex = hoveredPointIndex !== null ? hoveredPointIndex : pointsCoordinates.length - 1;
@@ -318,7 +395,7 @@ export default function DashboardPage() {
 
   return (
     <div className="p-8 bg-[#F8F9FD] min-h-screen text-slate-800 font-sans space-y-8 w-full max-w-[1700px] mx-auto">
-      
+
       {/* Header (Hidden in Print) */}
       <div className="flex items-center justify-between print:hidden">
         <div>
@@ -331,7 +408,7 @@ export default function DashboardPage() {
             <p className="text-xs text-slate-500 mt-0.5">Real-time performance analytics, behavioral evaluation, and certified broker reporting.</p>
           )}
         </div>
-        
+
         <div className="flex items-center gap-3">
           <button 
             onClick={handleDownloadReport}
@@ -339,7 +416,7 @@ export default function DashboardPage() {
           >
             <Download className="w-4 h-4 text-[#ec3044]" /> Download Certified Report
           </button>
-          
+
           <button 
             onClick={() => router.push('/trade-view')}
             className="flex items-center gap-2 bg-[#ec3044] hover:bg-[#d4283b] text-white font-bold px-4 py-2 rounded-xl text-sm shadow-sm transition cursor-pointer"
@@ -351,7 +428,7 @@ export default function DashboardPage() {
 
       {/* KPI Cards (Hidden in Print) */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 print:hidden">
-        
+
         {/* Net P&L Card with Withdrawals Breakdown */}
         <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-sm flex flex-col justify-between h-32">
           <div className="text-sm font-semibold text-slate-500 flex items-center justify-between">
@@ -362,7 +439,7 @@ export default function DashboardPage() {
             <div className={`text-3xl font-bold ${grossTradePnL >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
               {grossTradePnL >= 0 ? `$${grossTradePnL.toFixed(2)}` : `-$${Math.abs(grossTradePnL).toFixed(2)}`}
             </div>
-            
+
             {/* Secondary Net P&L Indicator showing impact of withdrawals */}
             {(totalWithdrawals > 0 || totalDeposits > 0) && (
               <div className="text-[11px] font-bold mt-1 flex items-center gap-1">
@@ -405,24 +482,86 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* EQUITY CURVE WITH ATH & ATL WATERMARKS AND WITHDRAWAL GAPS */}
+      {/* EQUITY CURVE WITH INTERACTIVE TARGET, DRAWDOWN & DISTANCE METRICS */}
       <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm p-6 space-y-4 w-full print:hidden">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+        
+        {/* Top Curve Controls & Badges */}
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-3">
           <div>
             <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Equity Curve Performance</h2>
-            <p className="text-[11px] text-slate-400">Hover across the chart to inspect chronological balance milestones & payouts</p>
+            <p className="text-[11px] text-slate-400">Set target and drawdown floors to display boundary levels and live remaining distance</p>
           </div>
-          
-          {/* ATH & ATL Water Marks Badges */}
-          <div className="flex items-center gap-4 text-xs font-mono">
+
+          {/* Target & Min Balance Input Controls */}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 bg-emerald-50/60 border border-emerald-200/80 px-2.5 py-1 rounded-xl">
+              <Flag className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <input 
+                type="number" 
+                step="any"
+                placeholder="Target Balance / Goal ($)"
+                value={targetInput}
+                onChange={(e) => handleTargetChange(e.target.value)}
+                className="bg-transparent text-xs font-bold text-emerald-800 placeholder:text-emerald-400 focus:outline-none w-44"
+              />
+            </div>
+
+            <div className="flex items-center gap-1.5 bg-rose-50/60 border border-rose-200/80 px-2.5 py-1 rounded-xl">
+              <ShieldAlert className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+              <input 
+                type="number" 
+                step="any"
+                placeholder="Min Floor / Max Loss ($)"
+                value={drawdownInput}
+                onChange={(e) => handleDrawdownChange(e.target.value)}
+                className="bg-transparent text-xs font-bold text-rose-800 placeholder:text-rose-400 focus:outline-none w-44"
+              />
+            </div>
+          </div>
+
+          {/* Dynamic Distance Badges & ATH/ATL */}
+          <div className="flex flex-wrap items-center gap-3 text-xs font-mono">
+            
+            {/* Live Distance to Target */}
+            {distanceToTarget !== null && (
+              <div className={`flex items-center gap-1 px-2.5 py-1 rounded-xl font-bold border ${
+                distanceToTarget <= 0 
+                  ? 'bg-emerald-500 text-white border-emerald-600 animate-pulse' 
+                  : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+              }`}>
+                <span>🎯</span>
+                <span>
+                  {distanceToTarget <= 0 
+                    ? `Goal Hit (+${Math.abs(distanceToTarget).toFixed(2)})` 
+                    : `$${distanceToTarget.toFixed(2)} to Target`}
+                </span>
+              </div>
+            )}
+
+            {/* Live Buffer to Drawdown */}
+            {distanceToDrawdown !== null && (
+              <div className={`flex items-center gap-1 px-2.5 py-1 rounded-xl font-bold border ${
+                distanceToDrawdown <= 0 
+                  ? 'bg-rose-600 text-white border-rose-700 animate-pulse' 
+                  : 'bg-rose-50 text-rose-700 border-rose-200'
+              }`}>
+                <span>⚠️</span>
+                <span>
+                  {distanceToDrawdown <= 0 
+                    ? `Breached by $${Math.abs(distanceToDrawdown).toFixed(2)}` 
+                    : `$${distanceToDrawdown.toFixed(2)} Buffer Left`}
+                </span>
+              </div>
+            )}
+
             {athPoint && (
-              <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-xl text-emerald-700 font-bold">
+              <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-xl text-emerald-700 font-bold">
                 <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
                 <span>ATH: ${athPoint.pnl.toFixed(2)}</span>
               </div>
             )}
             {atlPoint && (
-              <div className="flex items-center gap-1.5 bg-rose-50 border border-rose-200 px-3 py-1 rounded-xl text-rose-700 font-bold">
+              <div className="flex items-center gap-1.5 bg-rose-50 border border-rose-200 px-2.5 py-1 rounded-xl text-rose-700 font-bold">
                 <TrendingDown className="w-3.5 h-3.5 text-rose-600" />
                 <span>ATL: ${atlPoint.pnl.toFixed(2)}</span>
               </div>
@@ -438,6 +577,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        {/* SVG Equity Curve */}
         <div className="w-full h-96 relative">
           {pointsCoordinates.length < 2 ? (
             <div className="h-full flex items-center justify-center text-slate-400 text-xs font-medium">
@@ -471,7 +611,60 @@ export default function DashboardPage() {
                 </clipPath>
               </defs>
 
+              {/* Baseline zero line */}
               <line x1={0} y1={baselineY} x2={svgWidth} y2={baselineY} stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="6 4" />
+
+              {/* Profit Target Line */}
+              {targetY !== null && (
+                <g>
+                  <line 
+                    x1={0} 
+                    y1={targetY} 
+                    x2={svgWidth} 
+                    y2={targetY} 
+                    stroke="#10b981" 
+                    strokeWidth="2" 
+                    strokeDasharray="5 3" 
+                  />
+                  <text 
+                    x={svgWidth - 10} 
+                    y={targetY - 6} 
+                    textAnchor="end" 
+                    fill="#059669" 
+                    fontSize="11" 
+                    fontFamily="monospace"
+                    fontWeight="bold"
+                  >
+                    TARGET GOAL: +${targetPnL?.toLocaleString()}
+                  </text>
+                </g>
+              )}
+
+              {/* Drawdown Floor Line */}
+              {drawdownY !== null && (
+                <g>
+                  <line 
+                    x1={0} 
+                    y1={drawdownY} 
+                    x2={svgWidth} 
+                    y2={drawdownY} 
+                    stroke="#e11d48" 
+                    strokeWidth="2" 
+                    strokeDasharray="5 3" 
+                  />
+                  <text 
+                    x={svgWidth - 10} 
+                    y={drawdownY + 14} 
+                    textAnchor="end" 
+                    fill="#e11d48" 
+                    fontSize="11" 
+                    fontFamily="monospace"
+                    fontWeight="bold"
+                  >
+                    MIN FLOOR / LOSS LIMIT: -${Math.abs(drawdownPnL || 0).toLocaleString()}
+                  </text>
+                </g>
+              )}
 
               <g clipPath="url(#aboveBaselineClip)">
                 <polygon points={`0,${baselineY} ${polylineStr} ${svgWidth},${baselineY}`} fill="url(#greenEquityGrad)" />
@@ -588,7 +781,7 @@ export default function DashboardPage() {
       `}</style>
 
       <div className="hidden print:block bg-white text-slate-900 p-2 space-y-4 w-full text-xs">
-        
+
         {/* Compact Printable Header */}
         <div className="flex justify-between items-start border-b border-slate-200 pb-3">
           <div>
