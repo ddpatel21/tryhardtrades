@@ -169,12 +169,14 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
     e.preventDefault();
     if (!editingAccount || !editingAccount.id) return;
 
-    const updatedAcc = {
+    const updatedAcc: TradingAccount = {
       ...editingAccount,
       id: Number(editingAccount.id),
       groupName: editingAccount.groupName,
       inputType: editingAccount.inputType || 'Tradovate',
-      balance: Number(editingAccount.balance)
+      balance: Number(editingAccount.balance),
+      profitTarget: Number(editingAccount.profitTarget) || 0,
+      maxDrawdown: Number(editingAccount.maxDrawdown) || 0
     };
 
     // Update Local Dexie DB
@@ -195,6 +197,8 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
         type: editingAccount.type,
         firm: editingAccount.firm,
         balance: Number(editingAccount.balance),
+        profit_target: Number(editingAccount.profitTarget) || 0,
+        max_drawdown: Number(editingAccount.maxDrawdown) || 0,
         input_type: editingAccount.inputType || 'Tradovate',
       }).eq('id', editingAccount.id);
     } catch (err) {
@@ -583,7 +587,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
               <div className="flex items-center justify-between border-b border-slate-100 pb-4">
                 <div>
                   <h2 className="text-base font-black text-slate-900">Account Manager</h2>
-                  <p className="text-xs text-slate-500 font-medium">Manage, edit, balance track, and delete accounts & groups</p>
+                  <p className="text-xs text-slate-500 font-medium">Manage, edit, balance track, and set evaluation targets & drawdowns</p>
                 </div>
                 <button 
                   onClick={() => {
@@ -616,7 +620,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                     />
                   </div>
 
-                  {/* Account Group Name (Dropdown + Custom Input) */}
+                  {/* Account Group Name */}
                   <div>
                     <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">Account Group Name</label>
                     <input 
@@ -650,7 +654,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                       </select>
                     </div>
 
-                    {/* Broker / Firm (Dropdown + Custom Input) */}
+                    {/* Broker / Firm */}
                     <div>
                       <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">Broker / Firm</label>
                       <input 
@@ -695,7 +699,40 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                     />
                   </div>
 
-                  {/* --- ADJUSTMENTS (DEPOSITS & WITHDRAWALS LOG) --- */}
+                  {/* TARGET BALANCE AND DRAWDOWN BALANCE INPUTS */}
+                  <div className="grid grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <label className="block text-[10px] font-black text-emerald-700 uppercase tracking-wider mb-1">
+                        Target Profit / Pass ($)
+                      </label>
+                      <input 
+                        type="number" 
+                        step="any"
+                        placeholder="e.g. 3000 or 103000"
+                        value={editingAccount.profitTarget || ''} 
+                        onChange={e => setEditingAccount({ ...editingAccount, profitTarget: parseFloat(e.target.value) || 0 })}
+                        className="w-full bg-white border border-emerald-300 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      />
+                      <span className="text-[9px] text-slate-400 block mt-0.5">Profit Goal (or Target Balance)</span>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-black text-rose-700 uppercase tracking-wider mb-1">
+                        Drawdown Floor / Loss Limit ($)
+                      </label>
+                      <input 
+                        type="number" 
+                        step="any"
+                        placeholder="e.g. 2500 or 97500"
+                        value={editingAccount.maxDrawdown || ''} 
+                        onChange={e => setEditingAccount({ ...editingAccount, maxDrawdown: parseFloat(e.target.value) || 0 })}
+                        className="w-full bg-white border border-rose-300 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-500"
+                      />
+                      <span className="text-[9px] text-slate-400 block mt-0.5">Max Loss Limit (or Floor Balance)</span>
+                    </div>
+                  </div>
+
+                  {/* ADJUSTMENTS SECTION */}
                   <div className="pt-3 border-t border-slate-200 space-y-3">
                     <div className="flex items-center justify-between">
                       <label className="text-[11px] font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
@@ -747,7 +784,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                       </div>
                     </div>
 
-                    {/* Adjustments History Log List */}
                     <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
                       {adjustments.length === 0 ? (
                         <p className="text-[10px] text-slate-400 italic text-center py-2">No adjustments logged yet for this account.</p>
@@ -829,7 +865,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
 
                       <div className="space-y-2">
                         {groupAccs.map(acc => (
-                          <div key={acc.id} className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3 shadow-xs">
+                          <div key={acc.id} className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 shadow-xs">
                             <div className="flex items-center justify-between">
                               <div>
                                 <div className="font-bold text-slate-900 text-xs flex items-center gap-2">
@@ -861,6 +897,22 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                                 </button>
                               </div>
                             </div>
+
+                            {/* Badge showing target / drawdown if configured */}
+                            {(Boolean(acc.profitTarget) || Boolean(acc.maxDrawdown)) && (
+                              <div className="flex gap-2 text-[10px] font-mono border-t border-slate-200/60 pt-1.5">
+                                {Boolean(acc.profitTarget) && (
+                                  <span className="text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded font-bold">
+                                    Target: +${Number(acc.profitTarget).toLocaleString()}
+                                  </span>
+                                )}
+                                {Boolean(acc.maxDrawdown) && (
+                                  <span className="text-rose-700 bg-rose-50 border border-rose-200/60 px-2 py-0.5 rounded font-bold">
+                                    DD Limit: -${Number(acc.maxDrawdown).toLocaleString()}
+                                  </span>
+                                )}
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>

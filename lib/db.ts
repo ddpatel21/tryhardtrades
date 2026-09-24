@@ -43,6 +43,8 @@ export interface TradingAccount {
   type: 'Eval' | 'Funded' | 'Live';
   firm: string;
   balance: number;
+  profitTarget?: number; // Target dollar profit or target balance to pass
+  maxDrawdown?: number;  // Max drawdown limit threshold in dollars
   inputType: 'Tradovate' | 'AMP'; // Required data input type for statement uploads
 }
 
@@ -91,9 +93,10 @@ export class TradeZellaDatabase extends Dexie {
   constructor() {
     super('TradeZellaDB');
 
-    this.version(7).stores({
+    // Schema v8: Adds profitTarget and maxDrawdown to accounts table
+    this.version(8).stores({
       trades: '++id, openDate, symbol, status, side, strategy, account, accountGroup',
-      accounts: '++id, name, groupName, type, firm, inputType',
+      accounts: '++id, name, groupName, type, firm, inputType, profitTarget, maxDrawdown',
       strategies: '++id, &name',
       setups: '++id, &name',
       mistakes: '++id, &name',
