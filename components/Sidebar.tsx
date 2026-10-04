@@ -149,18 +149,34 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
 
   const handleDeleteAccount = async (id?: number | string) => {
     if (!id) return;
-    if (confirm('Are you sure you want to delete this account?')) {
+    if (confirm('Are you sure you want to delete this account? All associated adjustments and trades will also be cleaned up.')) {
+      const numId = Number(id);
+
+      // 1. Cascade delete orphaned adjustments from Supabase & Dexie
       try {
         const { supabase } = await import('@/lib/supabase');
+        await supabase.from('account_adjustments').delete().eq('account_id', id);
         await supabase.from('accounts').delete().eq('id', id);
-      } catch (e) {}
+      } catch (e) {
+        console.warn('Supabase cascade delete error:', e);
+      }
 
       try {
-        if (db.accounts) await db.accounts.delete(Number(id));
-      } catch (e) {}
+        if (db.adjustments) {
+          await db.adjustments.where('accountId').equals(numId).delete();
+        }
+        if (db.accounts) {
+          await db.accounts.delete(numId);
+        }
+      } catch (e) {
+        console.warn('Dexie cascade delete error:', e);
+      }
 
       const data = await cloudDb.getAccounts();
       setAccounts(data);
+      if (editingAccount?.id === id) {
+        setEditingAccount(null);
+      }
       window.dispatchEvent(new CustomEvent('account-filter-changed'));
     }
   };
@@ -228,11 +244,9 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
       date: adjDate
     };
 
-    // 1. Immediately push to UI array
     setAdjustments(prev => [newAdjustment, ...prev]);
     setAdjAmount('');
 
-    // 2. Write to Dexie Local Database
     try {
       if (db.adjustments) {
         await db.adjustments.put({
@@ -247,7 +261,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
       console.error("Dexie adjustment write error:", err);
     }
 
-    // 3. Write to Supabase Remote Database
     try {
       const { supabase } = await import('@/lib/supabase');
       const { error } = await supabase.from('account_adjustments').insert({
@@ -314,7 +327,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
 
   return (
     <>
-      {/* Mobile Top Header Toggle */}
       <div className="lg:hidden fixed top-0 left-0 right-0 h-16 bg-white border-b border-slate-200 z-50 flex items-center justify-between px-4 print:hidden">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-[#ec3044] rounded-xl flex items-center justify-center text-white font-bold">🎯</div>
@@ -328,7 +340,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
         </button>
       </div>
 
-      {/* Mobile Backdrop */}
       {isMobileOpen && (
         <div 
           onClick={() => setIsMobileOpen(false)}
@@ -336,7 +347,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
         />
       )}
 
-      {/* Sidebar Navigation */}
       <aside className={`bg-white border-r border-slate-200/80 flex flex-col justify-between p-6 fixed inset-y-0 left-0 z-50 transition-all duration-300 print:hidden ${
         isCollapsed ? 'w-20 px-3' : 'w-64'
       } ${
@@ -345,7 +355,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
         
         <div className="space-y-6 overflow-y-auto overflow-x-hidden flex-1 pr-1">
           
-          {/* Brand Logo & Name & Settings */}
           <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'justify-between px-2'}`}>
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 bg-[#ec3044] rounded-xl flex items-center justify-center text-white shadow-md shadow-[#ec3044]/30 shrink-0">
@@ -369,7 +378,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
             )}
           </div>
 
-          {/* Account Group Selector */}
           {!isCollapsed && (
             <div className="relative">
               <button 
@@ -492,7 +500,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
             </div>
           )}
 
-          {/* Add Trade Button */}
           <button 
             onClick={onOpenAddTrade}
             className={`w-full bg-[#ec3044] hover:bg-[#d4283b] text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 shadow-sm transition cursor-pointer text-sm ${
@@ -504,7 +511,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
             {!isCollapsed && <span>Add Trade</span>}
           </button>
 
-          {/* Nav Links */}
           <nav className="space-y-1.5">
             {navItems.map((item) => {
               const Icon = item.icon;
@@ -532,7 +538,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
 
         </div>
 
-        {/* Footer: Logout & Collapse Buttons */}
         <div className="pt-4 border-t border-slate-100 space-y-2">
           <button
             onClick={handleLogout}
@@ -607,7 +612,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                     <span className="text-[10px] font-bold text-slate-400 font-mono">ID: {editingAccount.id}</span>
                   </div>
 
-                  {/* Account Name */}
                   <div>
                     <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">Account Name</label>
                     <input 
@@ -620,7 +624,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                     />
                   </div>
 
-                  {/* Account Group Name */}
                   <div>
                     <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">Account Group Name</label>
                     <input 
@@ -640,7 +643,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
-                    {/* Type */}
                     <div>
                       <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">Type</label>
                       <select 
@@ -654,7 +656,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                       </select>
                     </div>
 
-                    {/* Broker / Firm */}
                     <div>
                       <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">Broker / Firm</label>
                       <input 
@@ -673,7 +674,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                     </div>
                   </div>
 
-                  {/* Data Input Type */}
                   <div>
                     <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">Data Input Type (Statement Format)</label>
                     <select 
@@ -687,7 +687,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                     </select>
                   </div>
 
-                  {/* Account Size / Balance */}
                   <div>
                     <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">Account Size / Balance ($)</label>
                     <input 
@@ -699,7 +698,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                     />
                   </div>
 
-                  {/* TARGET BALANCE AND DRAWDOWN BALANCE INPUTS */}
                   <div className="grid grid-cols-2 gap-3 pt-1">
                     <div>
                       <label className="block text-[10px] font-black text-emerald-700 uppercase tracking-wider mb-1">
@@ -732,7 +730,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                     </div>
                   </div>
 
-                  {/* ADJUSTMENTS SECTION */}
                   <div className="pt-3 border-t border-slate-200 space-y-3">
                     <div className="flex items-center justify-between">
                       <label className="text-[11px] font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
@@ -898,7 +895,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                               </div>
                             </div>
 
-                            {/* Badge showing target / drawdown if configured */}
                             {(Boolean(acc.profitTarget) || Boolean(acc.maxDrawdown)) && (
                               <div className="flex gap-2 text-[10px] font-mono border-t border-slate-200/60 pt-1.5">
                                 {Boolean(acc.profitTarget) && (

@@ -45,7 +45,7 @@ export default function DashboardPage() {
   const [mistakeTagsList, setMistakeTagsList] = useState<any[]>([]);
   const [adjustments, setAdjustments] = useState<AccountAdjustment[]>([]);
 
-  // Target and Drawdown custom inputs (persisted per account)
+  // Target and Drawdown custom inputs (persisted per account/group)
   const [targetInput, setTargetInput] = useState<string>('');
   const [drawdownInput, setDrawdownInput] = useState<string>('');
 
@@ -155,26 +155,28 @@ export default function DashboardPage() {
     return true;
   });
 
-  // Filter adjustments based on active sidebar account/group selection
-  const filteredAdjustments = adjustments.filter(adj => {
-    if (activeFilterSelection.type === 'account') {
-      const selectedAccObj = accounts.find(a => a.name === activeFilterSelection.name);
-      if (!selectedAccObj) return String(adj.accountId) === String(activeFilterSelection.name);
-      return String(adj.accountId) === String(selectedAccObj.id) || String(adj.accountId) === activeFilterSelection.name;
-    } else if (activeFilterSelection.type === 'group') {
-      const groupAccountIds = accounts
-        .filter(a => a.groupName === activeFilterSelection.name)
-        .map(a => String(a.id));
-      return groupAccountIds.includes(String(adj.accountId));
-    }
-    return true;
-  });
+  // Strict Filter: Filter out orphan adjustments from accounts that no longer exist
+  const validAccountIds = new Set(accounts.map(a => String(a.id)));
 
-  // Hover state for interactive equity curve
+  const filteredAdjustments = adjustments
+    .filter(adj => validAccountIds.has(String(adj.accountId)))
+    .filter(adj => {
+      if (activeFilterSelection.type === 'account') {
+        const selectedAccObj = accounts.find(a => a.name === activeFilterSelection.name);
+        if (!selectedAccObj) return String(adj.accountId) === String(activeFilterSelection.name);
+        return String(adj.accountId) === String(selectedAccObj.id);
+      } else if (activeFilterSelection.type === 'group') {
+        const groupAccountIds = accounts
+          .filter(a => a.groupName === activeFilterSelection.name)
+          .map(a => String(a.id));
+        return groupAccountIds.includes(String(adj.accountId));
+      }
+      return true;
+    });
+
   const [hoveredPointIndex, setHoveredPointIndex] = useState<number | null>(null);
   const accountName = activeFilterSelection.name;
 
-  // Trading Calculations
   const grossTradePnL = trades.reduce((acc, t) => acc + (t.netPnL || 0), 0);
   const winTrades = trades.filter(t => (t.netPnL || 0) > 0);
   const lossTrades = trades.filter(t => (t.netPnL || 0) < 0);
@@ -184,7 +186,6 @@ export default function DashboardPage() {
   const grossLosses = Math.abs(lossTrades.reduce((acc, t) => acc + t.netPnL, 0));
   const profitFactor = grossLosses > 0 ? (grossWins / grossLosses).toFixed(2) : grossWins > 0 ? '99.00' : '0.00';
 
-  // Adjustment Totals (Withdrawals & Deposits)
   const totalWithdrawals = filteredAdjustments
     .filter(a => a.type === 'withdrawal')
     .reduce((acc, a) => acc + a.amount, 0);
@@ -193,14 +194,11 @@ export default function DashboardPage() {
     .filter(a => a.type === 'deposit')
     .reduce((acc, a) => acc + a.amount, 0);
 
-  // Net P&L After Adjustments
   const netPnLAfterWithdrawals = grossTradePnL + totalDeposits - totalWithdrawals;
 
-  // Selected Account baseline detection for Target / Drawdown normalization
   const currentAccountObj = accounts.find(a => a.name === activeFilterSelection.name);
   const baselineAccountSize = currentAccountObj?.balance ? Number(currentAccountObj.balance) : 0;
 
-  // Compute clean P&L Deltas for Target and Drawdown
   let targetPnL: number | null = null;
   if (targetInput.trim()) {
     const rawT = parseFloat(targetInput);
@@ -225,11 +223,9 @@ export default function DashboardPage() {
     }
   }
 
-  // Calculate Distances
   const distanceToTarget = targetPnL !== null ? targetPnL - netPnLAfterWithdrawals : null;
   const distanceToDrawdown = drawdownPnL !== null ? netPnLAfterWithdrawals - drawdownPnL : null;
 
-  // Mistake Impact Analytics
   const mistakeMap: Record<string, { count: number; totalCost: number }> = {};
   trades.forEach(t => {
     if (t.mistakeTag) {
@@ -247,7 +243,6 @@ export default function DashboardPage() {
     .sort((a, b) => b[1].totalCost - a[1].totalCost)
     .slice(0, 4);
 
-  // Strategy Performance Map for Report
   const strategyMap: Record<string, { count: number; pnl: number }> = {};
   trades.forEach(t => {
     if (t.strategy) {
@@ -257,12 +252,10 @@ export default function DashboardPage() {
     }
   });
 
-  // Last 5 trades for the printable report summary
   const reportTrades = [...trades]
     .sort((a, b) => new Date(`${b.openDate} ${b.entryTime || '00:00'}`).getTime() - new Date(`${a.openDate} ${a.entryTime || '00:00'}`).getTime())
     .slice(0, 5);
 
-  // Market Session Breakdown
   const sessionMap: Record<string, { count: number; pnl: number }> = {
     'RTH AM': { count: 0, pnl: 0 },
     'RTH PM': { count: 0, pnl: 0 },
@@ -300,7 +293,6 @@ export default function DashboardPage() {
     }
   });
 
-  // Interleave Trades and Adjustments Chronologically for Equity Curve
   const combinedEvents = [
     ...trades.map(t => ({
       date: t.openDate,
@@ -332,7 +324,6 @@ export default function DashboardPage() {
 
   const equityData = [{ pnl: 0, date: 'Start', symbol: 'Baseline', tradePnL: 0, isAdjustment: false }, ...cumulativePoints];
 
-  // Include target & drawdown boundaries in vertical range calculations
   const allValues = equityData.map(d => d.pnl);
   if (targetPnL !== null) allValues.push(targetPnL);
   if (drawdownPnL !== null) allValues.push(drawdownPnL);
@@ -341,7 +332,6 @@ export default function DashboardPage() {
   const maxVal = Math.max(...allValues, 10);
   const range = maxVal - minVal || 1;
 
-  // SVG viewBox dimensions
   const svgWidth = 900;
   const svgHeight = 360;
 
@@ -351,11 +341,9 @@ export default function DashboardPage() {
     return { x, y, ...d };
   });
 
-  // Target and Drawdown Y positions on SVG plane
   const targetY = targetPnL !== null ? svgHeight - ((targetPnL - minVal) / range) * (svgHeight - 70) - 35 : null;
   const drawdownY = drawdownPnL !== null ? svgHeight - ((drawdownPnL - minVal) / range) * (svgHeight - 70) - 35 : null;
 
-  // Calculate ATH & ATL indices
   let athIndex = 0;
   let atlIndex = 0;
   pointsCoordinates.forEach((p, idx) => {
@@ -396,7 +384,7 @@ export default function DashboardPage() {
   return (
     <div className="p-8 bg-[#F8F9FD] min-h-screen text-slate-800 font-sans space-y-8 w-full max-w-[1700px] mx-auto">
 
-      {/* Header (Hidden in Print) */}
+      {/* Header */}
       <div className="flex items-center justify-between print:hidden">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Dashboard & Reports</h1>
@@ -426,10 +414,8 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* KPI Cards (Hidden in Print) */}
+      {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 print:hidden">
-
-        {/* Net P&L Card with Withdrawals Breakdown */}
         <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-sm flex flex-col justify-between h-32">
           <div className="text-sm font-semibold text-slate-500 flex items-center justify-between">
             <span>Net P&L</span>
@@ -440,7 +426,6 @@ export default function DashboardPage() {
               {grossTradePnL >= 0 ? `$${grossTradePnL.toFixed(2)}` : `-$${Math.abs(grossTradePnL).toFixed(2)}`}
             </div>
 
-            {/* Secondary Net P&L Indicator showing impact of withdrawals */}
             {(totalWithdrawals > 0 || totalDeposits > 0) && (
               <div className="text-[11px] font-bold mt-1 flex items-center gap-1">
                 <span className="text-slate-400">Bal:</span>
@@ -482,27 +467,26 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* EQUITY CURVE WITH INTERACTIVE TARGET, DRAWDOWN & DISTANCE METRICS */}
+      {/* EQUITY CURVE WITH TARGET, DRAWDOWN & DISTANCE METRICS */}
       <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm p-6 space-y-4 w-full print:hidden">
         
-        {/* Top Curve Controls & Badges */}
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-3">
           <div>
             <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Equity Curve Performance</h2>
             <p className="text-[11px] text-slate-400">Set target and drawdown floors to display boundary levels and live remaining distance</p>
           </div>
 
-          {/* Target & Min Balance Input Controls */}
+          {/* Interactive Target & Min Floor Input Controls */}
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1.5 bg-emerald-50/60 border border-emerald-200/80 px-2.5 py-1 rounded-xl">
               <Flag className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
               <input 
                 type="number" 
                 step="any"
-                placeholder="Target Balance / Goal ($)"
+                placeholder="Target Goal ($)"
                 value={targetInput}
                 onChange={(e) => handleTargetChange(e.target.value)}
-                className="bg-transparent text-xs font-bold text-emerald-800 placeholder:text-emerald-400 focus:outline-none w-44"
+                className="bg-transparent text-xs font-bold text-emerald-800 placeholder:text-emerald-400 focus:outline-none w-36"
               />
             </div>
 
@@ -511,18 +495,16 @@ export default function DashboardPage() {
               <input 
                 type="number" 
                 step="any"
-                placeholder="Min Floor / Max Loss ($)"
+                placeholder="Min Floor ($)"
                 value={drawdownInput}
                 onChange={(e) => handleDrawdownChange(e.target.value)}
-                className="bg-transparent text-xs font-bold text-rose-800 placeholder:text-rose-400 focus:outline-none w-44"
+                className="bg-transparent text-xs font-bold text-rose-800 placeholder:text-rose-400 focus:outline-none w-36"
               />
             </div>
           </div>
 
           {/* Dynamic Distance Badges & ATH/ATL */}
           <div className="flex flex-wrap items-center gap-3 text-xs font-mono">
-            
-            {/* Live Distance to Target */}
             {distanceToTarget !== null && (
               <div className={`flex items-center gap-1 px-2.5 py-1 rounded-xl font-bold border ${
                 distanceToTarget <= 0 
@@ -538,7 +520,6 @@ export default function DashboardPage() {
               </div>
             )}
 
-            {/* Live Buffer to Drawdown */}
             {distanceToDrawdown !== null && (
               <div className={`flex items-center gap-1 px-2.5 py-1 rounded-xl font-bold border ${
                 distanceToDrawdown <= 0 
@@ -577,7 +558,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* SVG Equity Curve */}
+        {/* SVG Viewport */}
         <div className="w-full h-96 relative">
           {pointsCoordinates.length < 2 ? (
             <div className="h-full flex items-center justify-center text-slate-400 text-xs font-medium">
@@ -614,7 +595,7 @@ export default function DashboardPage() {
               {/* Baseline zero line */}
               <line x1={0} y1={baselineY} x2={svgWidth} y2={baselineY} stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="6 4" />
 
-              {/* Profit Target Line */}
+              {/* Target Line */}
               {targetY !== null && (
                 <g>
                   <line 
@@ -661,7 +642,7 @@ export default function DashboardPage() {
                     fontFamily="monospace"
                     fontWeight="bold"
                   >
-                    MIN FLOOR / LOSS LIMIT: -${Math.abs(drawdownPnL || 0).toLocaleString()}
+                    MIN FLOOR / DRAWDOWN: -${Math.abs(drawdownPnL || 0).toLocaleString()}
                   </text>
                 </g>
               )}
@@ -718,7 +699,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* DASHBOARD MODULES (Hidden in Print) */}
+      {/* DASHBOARD MODULES */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 print:hidden">
         <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm p-6 space-y-4">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -761,28 +742,17 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* --- STRICTLY ONE-PAGE PRINTED PDF REPORT LAYOUT --- */}
+      {/* Printable Report Summary */}
       <style jsx global>{`
         @media print {
-          body {
-            background: white !important;
-          }
-          aside, nav, header, button {
-            display: none !important;
-          }
-          .print\\:block {
-            display: block !important;
-          }
-          @page {
-            size: letter portrait;
-            margin: 0.5in;
-          }
+          body { background: white !important; }
+          aside, nav, header, button { display: none !important; }
+          .print\\:block { display: block !important; }
+          @page { size: letter portrait; margin: 0.5in; }
         }
       `}</style>
 
       <div className="hidden print:block bg-white text-slate-900 p-2 space-y-4 w-full text-xs">
-
-        {/* Compact Printable Header */}
         <div className="flex justify-between items-start border-b border-slate-200 pb-3">
           <div>
             <div className="flex items-center gap-2">
@@ -796,7 +766,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Compact KPI Grid */}
         <div className="grid grid-cols-4 gap-3">
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5">
             <span className="text-[9px] font-bold text-slate-400 uppercase">Gross P&L</span>
@@ -818,7 +787,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Strategy Performance Breakdown */}
         <div className="space-y-1.5">
           <h3 className="text-[10px] font-bold text-slate-900 uppercase tracking-wider">Strategy Performance Breakdown</h3>
           <div className="border border-slate-200 rounded-lg overflow-hidden">
@@ -847,7 +815,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Executed Trades Summary Table */}
         <div className="space-y-1.5">
           <h3 className="text-[10px] font-bold text-slate-900 uppercase tracking-wider">Executed Trades Summary ({reportTrades.length} Recent)</h3>
           <div className="border border-slate-200 rounded-lg overflow-hidden">
@@ -882,12 +849,10 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Footer */}
         <div className="pt-3 border-t border-slate-200 flex justify-between items-center text-[9px] text-slate-400">
           <span>TryhardTradesJournal Professional Audit System</span>
           <span>Page 1 of 1</span>
         </div>
-
       </div>
 
     </div>
