@@ -437,17 +437,17 @@ export default function DashboardPage() {
   return (
     <div className="p-8 bg-[#F8F9FD] min-h-screen text-slate-800 font-sans space-y-8 w-full max-w-[1700px] mx-auto">
 
-      {/* PRINT ENGINE STYLES WITH FULL-BLEED STONKS BACKGROUND */}
+      {/* INSTITUTIONAL PDF RENDER ENGINE */}
       <style jsx global>{`
         @media print {
           @page {
             size: letter portrait;
-            margin: 0in; /* Zero margin enables true full-bleed background */
+            margin: 0.35in;
           }
           
           body {
-            background-color: #0b1528 !important;
-            color: #090d16 !important;
+            background-color: #0d1a30 !important;
+            color: #0f172a !important;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
@@ -461,34 +461,39 @@ export default function DashboardPage() {
             display: block !important;
           }
 
-          /* Repeated full-page background container */
-          .doc-page {
+          /* Watermark background on all printed pages */
+          .doc-sheet {
             page-break-after: always !important;
             break-after: page !important;
-            min-height: 11in;
             box-sizing: border-box;
-            padding: 0.55in 0.55in 0.5in 0.55in;
-            background-image: url('/stonks-bg.jpg') !important;
-            background-size: cover !important;
-            background-position: center center !important;
-            background-repeat: no-repeat !important;
+            position: relative;
+            min-height: 10.1in;
             display: flex;
             flex-direction: column;
             justify-content: space-between;
+            padding: 0.1in;
           }
 
-          .doc-page-auto {
+          .doc-sheet-auto {
             break-inside: auto !important;
-            min-height: 11in;
             box-sizing: border-box;
-            padding: 0.55in 0.55in 0.5in 0.55in;
-            background-image: url('/stonks-bg.jpg') !important;
-            background-size: cover !important;
-            background-position: center center !important;
-            background-repeat: no-repeat !important;
+            position: relative;
             display: flex;
             flex-direction: column;
             justify-content: space-between;
+            padding: 0.1in;
+          }
+
+          .stonks-watermark {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: -10;
+            opacity: 0.18;
+            object-fit: cover;
+            filter: saturate(1.4) contrast(1.1);
           }
 
           .avoid-break {
@@ -828,34 +833,38 @@ export default function DashboardPage() {
       </div>
 
       {/* ========================================================================================= */}
-      {/* CERTIFIED THIRD-PARTY AUDIT STATEMENT (AUTONOMOUS PDF WITH STONKS MEME BACKGROUND)         */}
+      {/* CERTIFIED THIRD-PARTY AUDIT STATEMENT (INSTITUTIONAL PDF WITH WATERMARK BACKGROUND)        */}
       {/* ========================================================================================= */}
 
       <div className="hidden print:block w-full text-slate-900 font-sans text-xs">
         
-        {/* ================= PAGE 1: EXECUTIVE TEAR SHEET & AUDITED EQUITY CURVE ================= */}
-        <section className="doc-page">
-          <div>
-            {/* Frosted Document Header */}
-            <div className="bg-white/94 backdrop-blur-sm border-2 border-slate-900/80 rounded-2xl p-4 shadow-xl border-b-4 border-b-[#EC3044] mb-4">
+        {/* Full-bleed background image tag */}
+        <img src="/stonks-bg.jpg" alt="Watermark" className="stonks-watermark" />
+
+        {/* ================= PAGE 1: EXECUTIVE AUDIT TEAR SHEET ================= */}
+        <section className="doc-sheet">
+          <div className="space-y-4">
+            
+            {/* Header Block */}
+            <div className="bg-white/95 rounded-xl border border-slate-200 p-4 shadow-sm border-t-4 border-t-[#EC3044]">
               <div className="flex justify-between items-start">
                 <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-[#EC3044] rounded-xl flex items-center justify-center text-white font-black text-sm shadow-md shadow-[#EC3044]/30">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 bg-[#EC3044] rounded-lg flex items-center justify-center text-white font-black text-sm">
                       🎯
                     </div>
                     <div>
-                      <h1 className="text-lg font-black tracking-tight uppercase text-slate-950 leading-none">
-                        TryhardTrades Certified Audit
+                      <h1 className="text-base font-black tracking-tight uppercase text-slate-950 leading-none">
+                        TryhardTrades Certified Audit Record
                       </h1>
                       <span className="text-[9px] font-black uppercase tracking-widest text-[#EC3044]">
-                        Institutional Performance Verification Record
+                        Independent Performance Verification Statement
                       </span>
                     </div>
                   </div>
                   
-                  <div className="pt-1.5 flex items-center gap-2 text-[10px] text-slate-700">
-                    <span className="font-bold text-slate-500 uppercase">Target Entity:</span>
+                  <div className="pt-2 flex items-center gap-2 text-[10px] text-slate-600">
+                    <span className="font-bold text-slate-400 uppercase">Target Entity:</span>
                     <span className="font-mono font-bold bg-slate-100 text-slate-900 px-2 py-0.5 rounded border border-slate-300">
                       {accountName}
                     </span>
@@ -868,74 +877,74 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="text-right space-y-1">
-                  <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 border border-emerald-300 rounded-lg text-emerald-800 text-[10px] font-black shadow-xs">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 border border-emerald-300 rounded-lg text-emerald-800 text-[10px] font-black">
                     <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" /> VERIFIED TRACK RECORD
                   </div>
-                  <div className="text-[9px] font-mono font-bold text-slate-600">DOC REF: {reportAuditId}</div>
-                  <div className="text-[9px] font-medium text-slate-600">TIMESTAMP: {reportDate}</div>
+                  <div className="text-[9px] font-mono font-bold text-slate-500">REF: {reportAuditId}</div>
+                  <div className="text-[9px] font-medium text-slate-500">DATE: {reportDate}</div>
                 </div>
               </div>
             </div>
 
-            {/* High-Level Financial Matrix (Frosted White Cards) */}
-            <div className="grid grid-cols-4 gap-3 mb-3 avoid-break">
-              <div className="bg-white/94 backdrop-blur-sm border border-slate-300 rounded-xl p-3 shadow-md">
-                <span className="text-[9px] font-black text-slate-500 uppercase tracking-wider block">Net Realized Return</span>
-                <div className={`text-xl font-black font-mono mt-1 ${grossTradePnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+            {/* Primary KPI Matrix */}
+            <div className="grid grid-cols-4 gap-3 avoid-break">
+              <div className="bg-white/95 border border-slate-200 rounded-xl p-3 shadow-xs">
+                <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Net Realized Return</span>
+                <div className={`text-xl font-black font-mono mt-0.5 ${grossTradePnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                   {grossTradePnL >= 0 ? `+$${grossTradePnL.toFixed(2)}` : `-$${Math.abs(grossTradePnL).toFixed(2)}`}
                 </div>
-                <span className="text-[8px] text-slate-500 font-semibold block mt-0.5">Realized after exchange & platform fees</span>
+                <span className="text-[8px] text-slate-500 font-medium block mt-0.5">Realized after exchange fees</span>
               </div>
 
-              <div className="bg-white/94 backdrop-blur-sm border border-slate-300 rounded-xl p-3 shadow-md">
-                <span className="text-[9px] font-black text-slate-500 uppercase tracking-wider block">Profit Factor</span>
-                <div className="text-xl font-black font-mono text-slate-950 mt-1">
+              <div className="bg-white/95 border border-slate-200 rounded-xl p-3 shadow-xs">
+                <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Profit Factor</span>
+                <div className="text-xl font-black font-mono text-slate-950 mt-0.5">
                   {profitFactor}
                 </div>
-                <span className="text-[8px] text-slate-500 font-semibold block mt-0.5">Gross Win ($) / Gross Loss ($)</span>
+                <span className="text-[8px] text-slate-500 font-medium block mt-0.5">Gross Win / Gross Loss</span>
               </div>
 
-              <div className="bg-white/94 backdrop-blur-sm border border-slate-300 rounded-xl p-3 shadow-md">
-                <span className="text-[9px] font-black text-slate-500 uppercase tracking-wider block">Execution Win Rate</span>
-                <div className="text-xl font-black font-mono text-slate-950 mt-1">
+              <div className="bg-white/95 border border-slate-200 rounded-xl p-3 shadow-xs">
+                <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Execution Win Rate</span>
+                <div className="text-xl font-black font-mono text-slate-950 mt-0.5">
                   {winRate}%
                 </div>
-                <span className="text-[8px] text-slate-500 font-semibold block mt-0.5">
-                  {winTrades.length} Wins / {lossTrades.length} Losses ({totalTradesCount} Total)
+                <span className="text-[8px] text-slate-500 font-medium block mt-0.5">
+                  {winTrades.length}W / {lossTrades.length}L ({totalTradesCount} Total)
                 </span>
               </div>
 
-              <div className="bg-white/94 backdrop-blur-sm border border-slate-300 rounded-xl p-3 shadow-md">
-                <span className="text-[9px] font-black text-slate-500 uppercase tracking-wider block">Payoff Ratio (W/L)</span>
-                <div className="text-xl font-black font-mono text-slate-950 mt-1">
+              <div className="bg-white/95 border border-slate-200 rounded-xl p-3 shadow-xs">
+                <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Payoff Ratio (W/L)</span>
+                <div className="text-xl font-black font-mono text-slate-950 mt-0.5">
                   {payoffRatio}
                 </div>
-                <span className="text-[8px] text-slate-500 font-semibold block mt-0.5">Avg Win ${avgWin.toFixed(0)} / Avg Loss ${avgLoss.toFixed(0)}</span>
+                <span className="text-[8px] text-slate-500 font-medium block mt-0.5">Avg Win ${avgWin.toFixed(0)} / Avg Loss ${avgLoss.toFixed(0)}</span>
               </div>
             </div>
 
-            {/* Supporting Financial Statistics */}
-            <div className="grid grid-cols-4 gap-3 mb-4 avoid-break">
-              <div className="bg-white/94 backdrop-blur-sm border border-slate-300 rounded-lg p-2.5 shadow-sm">
-                <span className="text-[8px] font-black text-slate-500 uppercase tracking-wider">Gross Profits</span>
+            {/* Supporting Financial Matrix */}
+            <div className="grid grid-cols-4 gap-3 avoid-break">
+              <div className="bg-white/95 border border-slate-200 rounded-lg p-2.5 shadow-xs">
+                <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider">Gross Profits</span>
                 <span className="text-xs font-mono font-bold text-emerald-600 block mt-0.5">+${totalGrossProfits.toFixed(2)}</span>
               </div>
-              <div className="bg-white/94 backdrop-blur-sm border border-slate-300 rounded-lg p-2.5 shadow-sm">
-                <span className="text-[8px] font-black text-slate-500 uppercase tracking-wider">Broker & Comm. Fees</span>
+              <div className="bg-white/95 border border-slate-200 rounded-lg p-2.5 shadow-xs">
+                <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider">Platform & Comm. Fees</span>
                 <span className="text-xs font-mono font-bold text-slate-700 block mt-0.5">-${totalCommissionsPaid.toFixed(2)}</span>
               </div>
-              <div className="bg-white/94 backdrop-blur-sm border border-slate-300 rounded-lg p-2.5 shadow-sm">
-                <span className="text-[8px] font-black text-slate-500 uppercase tracking-wider">Withdrawal Deductions</span>
+              <div className="bg-white/95 border border-slate-200 rounded-lg p-2.5 shadow-xs">
+                <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider">Withdrawal Deductions</span>
                 <span className="text-xs font-mono font-bold text-rose-600 block mt-0.5">-${totalWithdrawals.toFixed(2)}</span>
               </div>
-              <div className="bg-white/94 backdrop-blur-sm border border-slate-300 rounded-lg p-2.5 shadow-sm">
-                <span className="text-[8px] font-black text-slate-500 uppercase tracking-wider">Net Realized Equity</span>
+              <div className="bg-white/95 border border-slate-200 rounded-lg p-2.5 shadow-xs">
+                <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider">Net Realized Equity</span>
                 <span className="text-xs font-mono font-bold text-slate-950 block mt-0.5">${netPnLAfterWithdrawals.toFixed(2)}</span>
               </div>
             </div>
 
-            {/* High-Resolution Vector Equity Curve */}
-            <div className="bg-white/96 backdrop-blur-sm border-2 border-slate-300 rounded-2xl p-4 mb-4 avoid-break shadow-xl">
+            {/* Clean Equity Curve */}
+            <div className="bg-white/95 border border-slate-200 rounded-2xl p-4 avoid-break shadow-sm">
               <div className="flex justify-between items-center border-b border-slate-200 pb-2 mb-2">
                 <div className="flex items-center gap-1.5">
                   <span className="w-2.5 h-2.5 rounded-full bg-[#EC3044]" />
@@ -945,11 +954,11 @@ export default function DashboardPage() {
                 </div>
                 <div className="flex items-center gap-3 text-[10px] font-mono font-bold">
                   {athPoint && <span className="text-emerald-600">Peak Watermark: +${athPoint.pnl.toFixed(2)}</span>}
-                  {atlPoint && <span className="text-rose-600">Max Drawdown Point: ${atlPoint.pnl.toFixed(2)}</span>}
+                  {atlPoint && <span className="text-rose-600">Max Drawdown: ${atlPoint.pnl.toFixed(2)}</span>}
                 </div>
               </div>
 
-              <div className="w-full h-64">
+              <div className="w-full h-56">
                 <svg 
                   className="w-full h-full overflow-visible" 
                   viewBox={`0 0 ${svgWidth} ${svgHeight}`} 
@@ -1033,9 +1042,9 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* Session Edge Table & Verification Brief */}
+            {/* Session Edge Table & Verification Standards */}
             <div className="grid grid-cols-2 gap-4 avoid-break">
-              <div className="bg-white/94 backdrop-blur-sm border border-slate-300 rounded-xl p-3 shadow-md">
+              <div className="bg-white/95 border border-slate-200 rounded-xl p-3 shadow-xs">
                 <span className="text-[10px] font-black uppercase text-slate-900 tracking-wider flex items-center gap-1.5 mb-2">
                   <Clock className="w-3.5 h-3.5 text-blue-500" /> CME Trading Session Edge
                 </span>
@@ -1051,7 +1060,7 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="bg-white/94 backdrop-blur-sm border border-slate-300 rounded-xl p-3 shadow-md">
+              <div className="bg-white/95 border border-slate-200 rounded-xl p-3 shadow-xs">
                 <span className="text-[10px] font-black uppercase text-slate-900 tracking-wider flex items-center gap-1.5 mb-2">
                   <Scale className="w-3.5 h-3.5 text-[#EC3044]" /> Audit Methodology Standards
                 </span>
@@ -1062,50 +1071,51 @@ export default function DashboardPage() {
                 </div>
               </div>
             </div>
+
           </div>
 
           {/* Page 1 Footer */}
-          <div className="bg-white/90 backdrop-blur-sm px-4 py-2 rounded-xl border border-slate-300/80 flex justify-between text-[8.5px] font-mono text-slate-600 shadow-sm mt-3">
+          <div className="bg-white/95 px-4 py-2 rounded-xl border border-slate-200 flex justify-between text-[8.5px] font-mono text-slate-600 shadow-xs mt-3 avoid-break">
             <span>TryhardTrades Performance Analytics Engine • Verification ID: {reportAuditId}</span>
             <span>Section 1: Executive Overview</span>
           </div>
         </section>
 
-
-        {/* ================= SECTION 2: COMPLETE REPLICATED TRADE AUDIT LEDGER ================= */}
-        <section className="doc-page-auto">
-          <div>
-            <div className="bg-white/94 backdrop-blur-sm border border-slate-300 rounded-xl p-3.5 mb-4 flex justify-between items-end avoid-break shadow-md">
+        {/* ================= PAGE 2: ITEMIZED TRADE LEDGER & LEGAL AUDIT SEAL ================= */}
+        <section className="doc-sheet-auto">
+          <div className="space-y-4">
+            
+            <div className="bg-white/95 border border-slate-200 rounded-xl p-3 mb-2 flex justify-between items-end avoid-break shadow-xs">
               <div>
                 <h2 className="text-sm font-black uppercase tracking-wider text-slate-950">
                   Itemized Trade Execution Ledger
                 </h2>
-                <p className="text-[10px] text-slate-600 font-medium">
+                <p className="text-[10px] text-slate-500 font-medium">
                   Complete sequence of chronological executions, entry/exit fills, fees, and magnified returns.
                 </p>
               </div>
-              <span className="text-[10px] font-mono font-bold bg-slate-100 text-slate-900 px-2 py-0.5 rounded border border-slate-300">
+              <span className="text-[10px] font-mono font-bold bg-slate-100 text-slate-900 px-2.5 py-1 rounded border border-slate-300">
                 Total Records: {clusteredTrades.length}
               </span>
             </div>
 
-            {/* Continuous Institutional Table */}
-            <div className="bg-white/95 backdrop-blur-sm border border-slate-300 rounded-xl overflow-hidden shadow-lg mb-6">
-              <table className="w-full text-left text-[10px]">
-                <thead className="bg-slate-100 text-slate-800 font-black border-b border-slate-300">
+            {/* Continuous Execution Table with strict non-wrapping date/contract columns */}
+            <div className="bg-white/95 border border-slate-200 rounded-xl overflow-hidden shadow-xs mb-4">
+              <table className="w-full text-left text-[10.5px]">
+                <thead className="bg-slate-100 text-slate-800 font-black border-b border-slate-200">
                   <tr>
-                    <th className="py-2.5 px-3">Date</th>
-                    <th className="py-2.5 px-2">Fill Time</th>
-                    <th className="py-2.5 px-3">Contract</th>
-                    <th className="py-2.5 px-2">Side</th>
-                    <th className="py-2.5 px-2">Contracts Traded</th>
-                    <th className="py-2.5 px-3">Avg Entry</th>
-                    <th className="py-2.5 px-3">Avg Exit</th>
-                    <th className="py-2.5 px-2 text-right">Commissions</th>
-                    <th className="py-2.5 px-3 text-right">Realized Net</th>
+                    <th className="py-2.5 px-3 whitespace-nowrap">Date</th>
+                    <th className="py-2.5 px-2 whitespace-nowrap">Fill Time</th>
+                    <th className="py-2.5 px-3 whitespace-nowrap">Contract</th>
+                    <th className="py-2.5 px-2 whitespace-nowrap">Side</th>
+                    <th className="py-2.5 px-2 whitespace-nowrap">Contracts Traded</th>
+                    <th className="py-2.5 px-3 whitespace-nowrap">Avg Entry</th>
+                    <th className="py-2.5 px-3 whitespace-nowrap">Avg Exit</th>
+                    <th className="py-2.5 px-2 text-right whitespace-nowrap">Commissions</th>
+                    <th className="py-2.5 px-3 text-right whitespace-nowrap">Realized Net</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-200 text-slate-900">
+                <tbody className="divide-y divide-slate-100 text-slate-900">
                   {clusteredTrades.length === 0 ? (
                     <tr>
                       <td colSpan={9} className="py-4 text-center text-slate-400 font-medium italic">
@@ -1114,20 +1124,20 @@ export default function DashboardPage() {
                     </tr>
                   ) : (
                     clusteredTrades.map((t, idx) => (
-                      <tr key={idx} className={idx % 2 === 0 ? 'bg-white/80' : 'bg-slate-50/90'}>
-                        <td className="py-2 px-3 font-semibold text-slate-800">{t.openDate}</td>
-                        <td className="py-2 px-2 font-mono text-slate-600">{t.entryTime || '--'}</td>
-                        <td className="py-2 px-3 font-black text-[#EC3044]">{t.symbol}</td>
-                        <td className="py-2 px-2 font-bold text-slate-700">{t.side}</td>
-                        <td className="py-2 px-2 font-mono font-bold text-slate-900">
+                      <tr key={idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/70'}>
+                        <td className="py-2.5 px-3 font-semibold text-slate-800 whitespace-nowrap">{t.openDate}</td>
+                        <td className="py-2.5 px-2 font-mono text-slate-600 whitespace-nowrap">{t.entryTime || '--'}</td>
+                        <td className="py-2.5 px-3 font-black text-[#EC3044] whitespace-nowrap">{t.symbol}</td>
+                        <td className="py-2.5 px-2 font-bold text-slate-700 whitespace-nowrap">{t.side}</td>
+                        <td className="py-2.5 px-2 font-mono font-bold text-slate-900 whitespace-nowrap">
                           {t.contractsTraded} {t.accountCount > 1 ? `(×${t.accountCount} accts)` : ''}
                         </td>
-                        <td className="py-2 px-3 font-mono text-slate-800">${Number(t.entryPrice).toFixed(2)}</td>
-                        <td className="py-2 px-3 font-mono text-slate-800">${Number(t.exitPrice).toFixed(2)}</td>
-                        <td className="py-2 px-2 font-mono text-slate-600 text-right">
+                        <td className="py-2.5 px-3 font-mono text-slate-800 whitespace-nowrap">${Number(t.entryPrice).toFixed(2)}</td>
+                        <td className="py-2.5 px-3 font-mono text-slate-800 whitespace-nowrap">${Number(t.exitPrice).toFixed(2)}</td>
+                        <td className="py-2.5 px-2 font-mono text-slate-600 text-right whitespace-nowrap">
                           -${(Number(t.magnifiedCommissions || 0)).toFixed(2)}
                         </td>
-                        <td className={`py-2 px-3 font-mono font-black text-right ${t.magnifiedPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                        <td className={`py-2.5 px-3 font-mono font-black text-right whitespace-nowrap ${t.magnifiedPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                           {t.magnifiedPnL >= 0 ? '+' : ''}${Number(t.magnifiedPnL).toFixed(2)}
                         </td>
                       </tr>
@@ -1138,35 +1148,36 @@ export default function DashboardPage() {
             </div>
 
             {/* Cryptographic Seal & Verification Block */}
-            <div className="bg-white/94 backdrop-blur-sm border-2 border-slate-300 rounded-2xl p-4 avoid-break mb-4 shadow-xl">
+            <div className="bg-white/95 border border-slate-200 rounded-2xl p-4 avoid-break mb-3 shadow-xs">
               <div className="flex items-center justify-between">
                 <div className="space-y-1.5 max-w-xl">
                   <div className="flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                     <span className="text-[10px] font-black uppercase text-slate-900 tracking-wider">
                       Third-Party Cryptographic Integrity Validation
                     </span>
                   </div>
-                  <p className="text-[9px] text-slate-700 leading-relaxed font-normal">
+                  <p className="text-[9.5px] text-slate-600 leading-relaxed font-normal">
                     This certified track record has been validated using the TryhardTrades Local-First Performance Verification Protocol. Fills, execution pricing, slippage, and P&L allocations match raw statement transactions without synthetic smoothing or excluded losses. Certified for proprietary firm evaluations, master trading syndicates, and investor presentations.
                   </p>
                 </div>
 
-                <div className="text-center pl-6 border-l border-slate-300">
-                  <div className="w-14 h-14 rounded-full border-2 border-[#EC3044] bg-white flex flex-col items-center justify-center mx-auto text-[#EC3044] font-black text-[9px] uppercase tracking-tighter leading-none shadow-sm">
+                <div className="text-center pl-6 border-l border-slate-200 shrink-0">
+                  <div className="w-14 h-14 rounded-full border-2 border-[#EC3044] bg-white flex flex-col items-center justify-center mx-auto text-[#EC3044] font-black text-[9px] uppercase tracking-tighter leading-none shadow-xs">
                     <span>TRYHARD</span>
                     <span className="text-[7.5px] mt-0.5">VERIFIED</span>
                   </div>
-                  <span className="text-[8px] font-mono text-slate-600 block mt-1.5 font-bold">
+                  <span className="text-[8px] font-mono text-slate-500 block mt-1.5 font-bold whitespace-nowrap">
                     CERT #{reportAuditId.slice(-6)}
                   </span>
                 </div>
               </div>
             </div>
+
           </div>
 
           {/* Master Document Termination Footer */}
-          <div className="bg-white/90 backdrop-blur-sm px-4 py-2 rounded-xl border border-slate-300/80 flex justify-between text-[8.5px] font-mono text-slate-600 avoid-break shadow-sm mt-3">
+          <div className="bg-white/95 px-4 py-2 rounded-xl border border-slate-200 flex justify-between text-[8.5px] font-mono text-slate-600 avoid-break shadow-xs mt-3">
             <span>TryhardTrades Audit Infrastructure • End of Official Statement</span>
             <span>Document Checksum Validated</span>
           </div>
