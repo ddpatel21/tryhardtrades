@@ -39,14 +39,15 @@ export interface TradeItem {
 
 export interface TradingAccount {
   id?: number;
-  name: string;           // e.g., "AMP Live Master"
-  groupName: string;      // e.g., "Lives", "Props"
+  name: string;           // e.g., "001"
+  groupName: string;      // e.g., "Lucid"
   type: 'Eval' | 'Funded' | 'Live';
   firm: string;
   balance: number;
   profitTarget?: number;
   maxDrawdown?: number;
   inputType: 'Tradovate' | 'AMP';
+  isLeader?: boolean;     // Starred leader account of the group
 }
 
 export interface AccountAdjustment {
@@ -94,9 +95,9 @@ export class TradeZellaDatabase extends Dexie {
   constructor() {
     super('TradeZellaDB');
 
-    this.version(9).stores({
+    this.version(10).stores({
       trades: '++id, openDate, symbol, status, side, strategy, account, accountGroup, leaderTradeId',
-      accounts: '++id, name, groupName, type, firm, inputType, profitTarget, maxDrawdown',
+      accounts: '++id, name, groupName, type, firm, inputType, profitTarget, maxDrawdown, isLeader',
       strategies: '++id, &name',
       setups: '++id, &name',
       mistakes: '++id, &name',

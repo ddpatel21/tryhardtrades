@@ -24,7 +24,9 @@ import {
   UploadCloud,
   CheckCircle2,
   AlertCircle,
-  RefreshCw
+  RefreshCw,
+  Star,
+  Lock
 } from 'lucide-react';
 import { cloudDb } from '@/lib/cloudDb';
 import { db, TradingAccount, TradeItem } from '@/lib/db';
@@ -159,6 +161,37 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
   const existingGroupNames = Array.from(new Set(accounts.map(a => a.groupName).filter(Boolean)));
   const existingFirms = Array.from(new Set(accounts.map(a => a.firm).filter(Boolean)));
 
+  // Star / Toggle Account as Group Leader
+  const handleToggleLeader = async (account: TradingAccount) => {
+    if (!account.id || !account.groupName) return;
+
+    const makeLeader = !account.isLeader;
+    const sameGroupAccounts = accounts.filter(a => a.groupName === account.groupName);
+
+    try {
+      const { supabase } = await import('@/lib/supabase');
+
+      for (const acc of sameGroupAccounts) {
+        const isCurrent = acc.id === account.id;
+        const targetLeaderState = isCurrent ? makeLeader : false;
+
+        // 1. Supabase
+        await supabase.from('accounts').update({ is_leader: targetLeaderState }).eq('id', acc.id);
+
+        // 2. Dexie
+        if (db.accounts && acc.id) {
+          await db.accounts.update(Number(acc.id), { isLeader: targetLeaderState });
+        }
+      }
+
+      const refreshed = await cloudDb.getAccounts();
+      setAccounts(refreshed);
+      window.dispatchEvent(new CustomEvent('account-filter-changed'));
+    } catch (err) {
+      console.error('Error toggling leader status:', err);
+    }
+  };
+
   // Parser: Tradovate CSV statements
   const parseTradovateCSV = (csvText: string): Partial<TradeItem>[] => {
     const lines = csvText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
@@ -223,7 +256,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
     setUploadStatus({
       accountId: account.id,
       status: 'parsing',
-      message: `Parsing Tradovate file for ${account.name}...`
+      message: `Parsing Tradovate file for Leader account ${account.name}...`
     });
 
     try {
@@ -297,6 +330,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
           }
         } catch (err) {}
 
+        // Auto-replicate leader trade to follower accounts in the group
         if (account.groupName) {
           await copyLeaderTradeToGroup(localTrade);
         }
@@ -307,7 +341,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
       setUploadStatus({
         accountId: account.id,
         status: 'success',
-        message: `Imported ${savedCount} trades into ${account.name}${account.groupName ? ` (synced to group '${account.groupName}')` : ''}!`
+        message: `Imported ${savedCount} trades into Leader ${account.name} & cloned to all follower accounts in group '${account.groupName}'!`
       });
 
       window.dispatchEvent(new CustomEvent('account-filter-changed'));
@@ -364,7 +398,8 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
       inputType: editingAccount.inputType || 'Tradovate',
       balance: Number(editingAccount.balance),
       profitTarget: Number(editingAccount.profitTarget) || 0,
-      maxDrawdown: Number(editingAccount.maxDrawdown) || 0
+      maxDrawdown: Number(editingAccount.maxDrawdown) || 0,
+      isLeader: Boolean(editingAccount.isLeader)
     };
 
     try {
@@ -386,6 +421,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
         profit_target: Number(editingAccount.profitTarget) || 0,
         max_drawdown: Number(editingAccount.maxDrawdown) || 0,
         input_type: editingAccount.inputType || 'Tradovate',
+        is_leader: Boolean(editingAccount.isLeader)
       }).eq('id', editingAccount.id);
     } catch (err) {
       console.error("Supabase account update error:", err);
@@ -488,7 +524,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
     }));
   };
 
-  // Nav Items preserved exactly as your original file
   const navItems = [
     { label: 'Dashboard & Reports', href: '/', icon: LayoutDashboard },
     { label: 'Day View', href: '/day-view', icon: CalendarDays },
@@ -629,7 +664,12 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                                       selectedAccount === acc.name ? 'text-[#ec3044] font-bold' : 'text-slate-800'
                                     }`}
                                   >
-                                    <div className="truncate">{acc.name}</div>
+                                    <div className="truncate flex items-center gap-1.5">
+                                      <span>{acc.name}</span>
+                                      {acc.isLeader && (
+                                        <Star className="w-3 h-3 fill-amber-400 text-amber-500 shrink-0" />
+                                      )}
+                                    </div>
                                     <div className="text-[9px] text-slate-500">{acc.firm} • <span className="font-mono font-bold">${acc.balance.toLocaleString()}</span></div>
                                   </button>
                                   <button
@@ -753,7 +793,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
 
       </aside>
 
-      {/* ACCOUNT MANAGER DRAWER SIDEBAR WITH DIRECT TRADOVATE DROPZONES */}
+      {/* ACCOUNT MANAGER DRAWER SIDEBAR WITH LEADER STAR & AUTO-REPLICATION DROPZONES */}
       {isAccountManagerOpen && (
         <div 
           onClick={() => {
@@ -772,7 +812,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
               <div className="flex items-center justify-between border-b border-slate-100 pb-4">
                 <div>
                   <h2 className="text-base font-black text-slate-900">Account Manager</h2>
-                  <p className="text-xs text-slate-500 font-medium">Manage accounts, set targets, or drag & drop Tradovate statements directly below</p>
+                  <p className="text-xs text-slate-500 font-medium">Star your group leader account (⭐). Uploading to the leader replicates to all followers.</p>
                 </div>
                 <button 
                   onClick={() => {
@@ -1040,122 +1080,163 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                 </button>
               )}
 
-              {/* EXISTING ACCOUNTS LIST WITH DEDICATED DROPZONES */}
+              {/* EXISTING ACCOUNTS LIST WITH STAR LEADER SELECTION & DROPZONES */}
               <div className="space-y-6 pt-2">
                 <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider">Existing Accounts</h3>
                 
                 {Object.keys(groupedAccounts).length === 0 ? (
                   <p className="text-xs text-slate-400 italic text-center py-6">No accounts created yet.</p>
                 ) : (
-                  Object.entries(groupedAccounts).map(([groupName, groupAccs], groupIdx) => (
-                    <div key={groupName} className="space-y-3">
-                      {groupIdx > 0 && <hr className="border-t-2 border-[#ec3044] my-4" />}
-                      
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-extrabold text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-full bg-[#ec3044]"></span>
-                          {groupName}
-                        </span>
-                        <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
-                          {groupAccs.length} account{groupAccs.length === 1 ? '' : 's'}
-                        </span>
-                      </div>
+                  Object.entries(groupedAccounts).map(([groupName, groupAccs], groupIdx) => {
+                    const leaderAccount = groupAccs.find(a => a.isLeader);
 
-                      <div className="space-y-3">
-                        {groupAccs.map(acc => {
-                          const isDragTarget = dragOverAccountId === acc.id;
+                    return (
+                      <div key={groupName} className="space-y-3">
+                        {groupIdx > 0 && <hr className="border-t-2 border-[#ec3044] my-4" />}
+                        
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-extrabold text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-[#ec3044]"></span>
+                            {groupName}
+                          </span>
+                          <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                            {groupAccs.length} account{groupAccs.length === 1 ? '' : 's'}
+                            {leaderAccount ? ` • Leader: ${leaderAccount.name}` : ' • No Leader Starred'}
+                          </span>
+                        </div>
 
-                          return (
-                            <div key={acc.id} className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 shadow-xs">
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <div className="font-bold text-slate-900 text-xs flex items-center gap-2">
-                                    {acc.name}
-                                    <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
-                                      acc.type === 'Live' ? 'bg-emerald-50 text-emerald-600' : acc.type === 'Funded' ? 'bg-blue-50 text-blue-600' : 'bg-amber-50 text-amber-600'
-                                    }`}>
-                                      {acc.type}
+                        <div className="space-y-3">
+                          {groupAccs.map(acc => {
+                            const isDragTarget = dragOverAccountId === acc.id;
+                            const isLeader = Boolean(acc.isLeader);
+
+                            return (
+                              <div key={acc.id} className={`p-3.5 bg-slate-50 border rounded-2xl space-y-3 shadow-xs transition ${
+                                isLeader ? 'border-amber-300 bg-amber-50/20' : 'border-slate-200'
+                              }`}>
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    {/* Star Button for Leader Toggle */}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleLeader(acc)}
+                                      className={`p-1.5 rounded-lg transition cursor-pointer ${
+                                        isLeader 
+                                          ? 'text-amber-500 hover:text-amber-600 bg-amber-100/60' 
+                                          : 'text-slate-300 hover:text-amber-400 hover:bg-slate-200/50'
+                                      }`}
+                                      title={isLeader ? "Leader Account (Click to unstar)" : "Click to Star as Group Leader"}
+                                    >
+                                      <Star className={`w-4 h-4 ${isLeader ? 'fill-amber-400 text-amber-500' : ''}`} />
+                                    </button>
+
+                                    <div>
+                                      <div className="font-bold text-slate-900 text-xs flex items-center gap-2">
+                                        {acc.name}
+                                        {isLeader && (
+                                          <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 border border-amber-300">
+                                            LEADER
+                                          </span>
+                                        )}
+                                        <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
+                                          acc.type === 'Live' ? 'bg-emerald-50 text-emerald-600' : acc.type === 'Funded' ? 'bg-blue-50 text-blue-600' : 'bg-amber-50 text-amber-600'
+                                        }`}>
+                                          {acc.type}
+                                        </span>
+                                      </div>
+                                      <div className="text-[10px] text-slate-600 font-semibold mt-0.5">
+                                        {acc.firm ? `${acc.firm} • ` : ''}<span className="font-bold text-[#ec3044]">Tradovate</span> • <span className="font-mono font-bold text-slate-900">${acc.balance.toLocaleString()}</span>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-1">
+                                    <button 
+                                      onClick={() => setEditingAccount(acc)}
+                                      className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-200/60 rounded-lg transition cursor-pointer"
+                                      title="Edit Account Details"
+                                    >
+                                      <Edit2 className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button 
+                                      onClick={() => handleDeleteAccount(acc.id)}
+                                      className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                                      title="Delete Account"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {/* Target / Drawdown badges if configured */}
+                                {(Boolean(acc.profitTarget) || Boolean(acc.maxDrawdown)) && (
+                                  <div className="flex gap-2 text-[10px] font-mono border-t border-slate-200/60 pt-1.5">
+                                    {Boolean(acc.profitTarget) && (
+                                      <span className="text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded font-bold">
+                                        Target: +${Number(acc.profitTarget).toLocaleString()}
+                                      </span>
+                                    )}
+                                    {Boolean(acc.maxDrawdown) && (
+                                      <span className="text-rose-700 bg-rose-50 border border-rose-200/60 px-2 py-0.5 rounded font-bold">
+                                        DD: -${Number(acc.maxDrawdown).toLocaleString()}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+
+                                {/* CONDITIONAL DROPZONE: LEADER GETS UPLOAD ZONE, FOLLOWERS GET MIRROR BADGE */}
+                                {isLeader || (!leaderAccount && groupAccs[0]?.id === acc.id) ? (
+                                  <div
+                                    onDragOver={(e) => { e.preventDefault(); setDragOverAccountId(acc.id!); }}
+                                    onDragLeave={() => setDragOverAccountId(null)}
+                                    onDrop={(e) => {
+                                      e.preventDefault();
+                                      setDragOverAccountId(null);
+                                      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                                        handleFileUpload(e.dataTransfer.files[0], acc);
+                                      }
+                                    }}
+                                    className={`relative border-2 border-dashed rounded-xl p-3 text-center transition flex flex-col items-center justify-center cursor-pointer ${
+                                      isDragTarget 
+                                        ? 'border-[#ec3044] bg-[#ec3044]/10 ring-2 ring-[#ec3044]/20' 
+                                        : 'border-amber-300 hover:border-[#ec3044] bg-white hover:bg-amber-50/40'
+                                    }`}
+                                  >
+                                    <input 
+                                      type="file" 
+                                      accept=".csv"
+                                      onChange={(e) => {
+                                        if (e.target.files && e.target.files[0]) {
+                                          handleFileUpload(e.target.files[0], acc);
+                                        }
+                                      }}
+                                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                                    />
+                                    <div className="flex items-center gap-2 text-slate-800">
+                                      <UploadCloud className="w-4 h-4 text-[#ec3044]" />
+                                      <span className="text-xs font-black">Drop Leader Statement (<span className="text-[#ec3044]">Tradovate</span>)</span>
+                                    </div>
+                                    <span className="text-[9px] text-amber-700 font-bold mt-0.5">
+                                      ⭐ Leader: Automatically copies trades across all follower accounts in {groupName}
                                     </span>
                                   </div>
-                                  <div className="text-[10px] text-slate-600 font-semibold mt-0.5">
-                                    {acc.firm ? `${acc.firm} • ` : ''}<span className="font-bold text-[#ec3044]">Tradovate</span> • <span className="font-mono font-bold text-slate-900">${acc.balance.toLocaleString()}</span>
+                                ) : (
+                                  <div className="border border-slate-200/80 bg-white/60 rounded-xl p-2.5 text-center flex items-center justify-center gap-2 text-slate-500">
+                                    <Lock className="w-3.5 h-3.5 text-slate-400" />
+                                    <span className="text-[11px] font-bold text-slate-600">
+                                      Follower Account — Auto-mirrored from {leaderAccount ? leaderAccount.name : 'Leader'}
+                                    </span>
                                   </div>
-                                </div>
-                                <div className="flex items-center gap-1">
-                                  <button 
-                                    onClick={() => setEditingAccount(acc)}
-                                    className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-200/60 rounded-lg transition cursor-pointer"
-                                    title="Edit Account Details"
-                                  >
-                                    <Edit2 className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button 
-                                    onClick={() => handleDeleteAccount(acc.id)}
-                                    className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
-                                    title="Delete Account"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
+                                )}
+
                               </div>
+                            );
+                          })}
+                        </div>
 
-                              {/* Target / Drawdown badges if configured */}
-                              {(Boolean(acc.profitTarget) || Boolean(acc.maxDrawdown)) && (
-                                <div className="flex gap-2 text-[10px] font-mono border-t border-slate-200/60 pt-1.5">
-                                  {Boolean(acc.profitTarget) && (
-                                    <span className="text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded font-bold">
-                                      Target: +${Number(acc.profitTarget).toLocaleString()}
-                                    </span>
-                                  )}
-                                  {Boolean(acc.maxDrawdown) && (
-                                    <span className="text-rose-700 bg-rose-50 border border-rose-200/60 px-2 py-0.5 rounded font-bold">
-                                      DD: -${Number(acc.maxDrawdown).toLocaleString()}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-
-                              {/* DEDICATED TRADOVATE DRAG-AND-DROP ZONE */}
-                              <div
-                                onDragOver={(e) => { e.preventDefault(); setDragOverAccountId(acc.id!); }}
-                                onDragLeave={() => setDragOverAccountId(null)}
-                                onDrop={(e) => {
-                                  e.preventDefault();
-                                  setDragOverAccountId(null);
-                                  if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-                                    handleFileUpload(e.dataTransfer.files[0], acc);
-                                  }
-                                }}
-                                className={`relative border-2 border-dashed rounded-xl p-3 text-center transition flex flex-col items-center justify-center cursor-pointer ${
-                                  isDragTarget 
-                                    ? 'border-[#ec3044] bg-[#ec3044]/10 ring-2 ring-[#ec3044]/20' 
-                                    : 'border-slate-300 hover:border-[#ec3044]/60 bg-white hover:bg-slate-50/50'
-                                }`}
-                              >
-                                <input 
-                                  type="file" 
-                                  accept=".csv"
-                                  onChange={(e) => {
-                                    if (e.target.files && e.target.files[0]) {
-                                      handleFileUpload(e.target.files[0], acc);
-                                    }
-                                  }}
-                                  className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                                />
-                                <div className="flex items-center gap-2 text-slate-700">
-                                  <UploadCloud className="w-4 h-4 text-[#ec3044]" />
-                                  <span className="text-xs font-bold">Drop <span className="text-[#ec3044]">Tradovate CSV</span> here</span>
-                                </div>
-                                <span className="text-[9px] text-slate-400 mt-0.5">Auto-replicates to all accounts in {groupName}</span>
-                              </div>
-
-                            </div>
-                          );
-                        })}
                       </div>
-
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
 
