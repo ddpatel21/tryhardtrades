@@ -54,11 +54,52 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
 
-  useEffect(() => {
-    async function loadAccounts() {
-      const data = await cloudDb.getAccounts();
-      setAccounts(data);
+  // Strict Sync: Fetch from Supabase as primary source of truth, then overwrite local Dexie cache
+  const loadAccounts = async () => {
+    try {
+      const { supabase } = await import('@/lib/supabase');
+      const { data, error } = await supabase
+        .from('accounts')
+        .select('*')
+        .order('id', { ascending: true });
+
+      if (data && data.length > 0) {
+        const remoteAccounts: TradingAccount[] = data.map(d => ({
+          id: d.id,
+          name: d.name,
+          groupName: d.group_name || d.groupName || 'Default Group',
+          type: d.type || 'Eval',
+          firm: d.firm || 'Lucid',
+          balance: Number(d.balance || 0),
+          profitTarget: Number(d.profit_target || d.profitTarget || 0),
+          maxDrawdown: Number(d.max_drawdown || d.maxDrawdown || 0),
+          inputType: d.input_type || d.inputType || 'Tradovate',
+          isLeader: Boolean(d.is_leader ?? d.isLeader ?? false),
+        }));
+
+        // Flush out local ghost/deleted accounts in Dexie to avoid desync
+        if (db.accounts) {
+          try {
+            await db.accounts.clear();
+            await db.accounts.bulkPut(remoteAccounts);
+          } catch (e) {
+            console.warn('Dexie accounts cache overwrite warning:', e);
+          }
+        }
+
+        setAccounts(remoteAccounts);
+        return;
+      }
+    } catch (err) {
+      console.warn('Supabase accounts fetch failed, falling back to local DB:', err);
     }
+
+    // Fallback if offline
+    const localData = await cloudDb.getAccounts();
+    setAccounts(localData);
+  };
+
+  useEffect(() => {
     loadAccounts();
 
     const handleRefresh = () => loadAccounts();
@@ -161,36 +202,52 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
   const existingGroupNames = Array.from(new Set(accounts.map(a => a.groupName).filter(Boolean)));
   const existingFirms = Array.from(new Set(accounts.map(a => a.firm).filter(Boolean)));
 
-  // Toggle Account as Group Leader
+  // Toggle Account as Group Leader (Optimistic UI + Supabase & Dexie Sync)
   const handleToggleLeader = async (account: TradingAccount) => {
     if (!account.id || !account.groupName) return;
 
-    const makeLeader = !account.isLeader;
-    const sameGroupAccounts = accounts.filter(a => a.groupName === account.groupName);
+    const targetLeaderState = !account.isLeader;
+    const currentGroupName = account.groupName;
 
+    // 1. Optimistic React state update
+    const updatedAccounts = accounts.map(a => {
+      if (a.groupName === currentGroupName) {
+        return {
+          ...a,
+          isLeader: a.id === account.id ? targetLeaderState : false
+        };
+      }
+      return a;
+    });
+    setAccounts(updatedAccounts);
+
+    // 2. Persist to Supabase & Dexie
     try {
       const { supabase } = await import('@/lib/supabase');
+      const sameGroupAccounts = accounts.filter(a => a.groupName === currentGroupName);
 
       for (const acc of sameGroupAccounts) {
         const isCurrent = acc.id === account.id;
-        const targetLeaderState = isCurrent ? makeLeader : false;
+        const nextState = isCurrent ? targetLeaderState : false;
 
-        await supabase.from('accounts').update({ is_leader: targetLeaderState }).eq('id', acc.id);
+        await supabase
+          .from('accounts')
+          .update({ is_leader: nextState })
+          .eq('id', acc.id);
 
         if (db.accounts && acc.id) {
-          await db.accounts.update(Number(acc.id), { isLeader: targetLeaderState });
+          await db.accounts.update(Number(acc.id), { isLeader: nextState });
         }
       }
 
-      const refreshed = await cloudDb.getAccounts();
-      setAccounts(refreshed);
       window.dispatchEvent(new CustomEvent('account-filter-changed'));
     } catch (err) {
-      console.error('Error toggling leader status:', err);
+      console.error('Error saving leader status to Supabase:', err);
+      loadAccounts(); // Revert on failure
     }
   };
 
-  // Robust Tradovate CSV Parser
+  // Robust Tradovate CSV Parser for Performance & Order Fills
   const parseTradovateCSV = (csvText: string): Partial<TradeItem>[] => {
     const lines = csvText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     if (lines.length < 2) return [];
@@ -470,8 +527,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
         console.warn('Dexie cascade delete error:', e);
       }
 
-      const data = await cloudDb.getAccounts();
-      setAccounts(data);
+      await loadAccounts();
       if (editingAccount?.id === id) {
         setEditingAccount(null);
       }
@@ -520,8 +576,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
     }
 
     setEditingAccount(null);
-    const data = await cloudDb.getAccounts();
-    setAccounts(data);
+    await loadAccounts();
     window.dispatchEvent(new CustomEvent('account-filter-changed'));
   };
 
