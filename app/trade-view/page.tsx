@@ -200,7 +200,6 @@ export default function TradeViewPage() {
     };
   }, []);
 
-  // Filter based on selected scope
   const scopedTrades = rawTrades.filter((trade) => {
     if (activeFilterSelection.type === 'account') {
       if (trade.account !== activeFilterSelection.name) return false;
@@ -231,7 +230,6 @@ export default function TradeViewPage() {
 
   const isIndividualAccountView = activeFilterSelection.type === 'account';
 
-  // Consolidate copied trades into 1 row per execution
   const magnifiedTrades = React.useMemo(() => {
     if (isIndividualAccountView) {
       return scopedTrades.map(t => ({
@@ -1001,6 +999,163 @@ export default function TradeViewPage() {
           </table>
         </div>
       </div>
+
+      {/* RIGHT-CLICK CONTEXT MENU MODAL */}
+      {contextMenu && (
+        <div 
+          onClick={(e) => e.stopPropagation()}
+          style={{ top: `${Math.min(contextMenu.y, window.innerHeight - 250)}px`, left: `${Math.min(contextMenu.x, window.innerWidth - 220)}px` }}
+          className="absolute bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 w-52 p-1.5 text-xs font-semibold text-slate-700 space-y-1"
+        >
+          <div className="px-3 py-1.5 border-b border-slate-100 font-bold text-slate-400 text-[10px] uppercase">
+            Quick Actions
+          </div>
+
+          <button 
+            onClick={() => { router.push(`/trade-view/${contextMenu.tradeId}`); setContextMenu(null); }}
+            className="flex items-center gap-2.5 w-full p-2 hover:bg-slate-50 rounded-lg text-left cursor-pointer text-slate-800"
+          >
+            <ExternalLink className="w-3.5 h-3.5 text-slate-400" /> View Full Trade
+          </button>
+
+          <button 
+            onClick={() => setContextSubAction(contextSubAction === 'account' ? null : 'account')}
+            className="flex items-center gap-2.5 w-full p-2 hover:bg-slate-50 rounded-lg text-left cursor-pointer text-[#ec3044]"
+          >
+            <Wallet className="w-3.5 h-3.5" /> Assign Account
+          </button>
+          {contextSubAction === 'account' && (
+            <div className="pl-4 pr-1 py-1 space-y-1 bg-slate-50 rounded-lg">
+              {accounts.map(a => (
+                <div 
+                  key={a.id || a.name} 
+                  onClick={async () => { 
+                    const match = trades.find(t => t.id === contextMenu.tradeId);
+                    const idsToUpdate = match?.allIds || [contextMenu.tradeId];
+                    const { supabase } = await import('@/lib/supabase');
+                    for (const targetId of idsToUpdate) {
+                      await supabase.from('trades').update({ account: a.name, account_group: a.groupName }).eq('id', targetId);
+                      await db.trades.update(targetId, { account: a.name, accountGroup: a.groupName });
+                    }
+                    setContextMenu(null);
+                    fetchCloudData();
+                  }}
+                  className="p-1.5 hover:bg-slate-200/60 rounded cursor-pointer font-bold text-slate-700 truncate"
+                >
+                  {a.name} ({a.groupName})
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="border-t border-slate-100 my-1" />
+
+          <button 
+            onClick={async () => {
+              if (confirm('Are you sure you want to delete this execution across all copied accounts?')) {
+                const match = trades.find(t => t.id === contextMenu.tradeId);
+                const idsToDelete = match?.allIds || [contextMenu.tradeId];
+                const { supabase } = await import('@/lib/supabase');
+                for (const targetId of idsToDelete) {
+                  await supabase.from('trades').delete().eq('id', targetId);
+                  await deleteLeaderTradeCopies(targetId);
+                  await db.trades.delete(targetId);
+                }
+                setContextMenu(null);
+                fetchCloudData();
+              }
+            }}
+            className="flex items-center gap-2.5 w-full p-2 hover:bg-rose-50 text-rose-600 rounded-lg text-left font-bold cursor-pointer"
+          >
+            <Trash2 className="w-3.5 h-3.5" /> Delete Across All Accounts
+          </button>
+        </div>
+      )}
+
+      {/* Mass Tag Modal */}
+      {tagModalType && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-sm p-5 shadow-xl">
+            <h3 className="text-sm font-bold text-slate-900 mb-2 capitalize">
+              Apply {tagModalType} to {selectedTrades.length} selected execution(s)
+            </h3>
+            <input 
+              type="text" 
+              value={tagInputVal} 
+              onChange={e => setTagInputVal(e.target.value)} 
+              placeholder={`Enter ${tagModalType} value...`} 
+              className="w-full border border-[#ec3044]/40 rounded-lg p-2.5 text-xs text-[#ec3044] font-semibold mb-4 focus:outline-none focus:ring-2 focus:ring-[#ec3044]"
+            />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setTagModalType(null)} className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-semibold cursor-pointer">
+                Cancel
+              </button>
+              <button 
+                onClick={handleApplyMassTag} 
+                className="px-4 py-1.5 bg-[#ec3044] hover:bg-[#d4283b] text-white rounded-lg text-xs font-bold shadow-md cursor-pointer"
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tag Creation Modal */}
+      {activeNewModalType && (
+        <div 
+          onClick={() => { setActiveNewModalType(null); setNewModalInputVal(''); setTargetTradeIdForNewTag(null); }}
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+        >
+          <div 
+            onClick={e => e.stopPropagation()}
+            className="bg-white border border-slate-200 rounded-2xl w-full max-w-sm p-5 shadow-2xl"
+          >
+            <div className="flex justify-between items-center mb-3 pb-2 border-b border-slate-100">
+              <h3 className="text-sm font-bold text-slate-900 capitalize">
+                Create New {activeNewModalType} Tag
+              </h3>
+              <button 
+                onClick={() => { setActiveNewModalType(null); setNewModalInputVal(''); setTargetTradeIdForNewTag(null); }} 
+                className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateNewTagPopup} className="space-y-4">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1 capitalize">{activeNewModalType} Name</label>
+                <input 
+                  type="text" 
+                  autoFocus
+                  value={newModalInputVal} 
+                  onChange={e => setNewModalInputVal(e.target.value)} 
+                  placeholder={`Enter ${activeNewModalType} tag name...`} 
+                  className="w-full border border-[#ec3044]/40 bg-[#ec3044]/5 rounded-xl p-2.5 text-xs text-[#ec3044] font-bold focus:outline-none focus:ring-2 focus:ring-[#ec3044]"
+                  required
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                <button 
+                  type="button" 
+                  onClick={() => { setActiveNewModalType(null); setNewModalInputVal(''); setTargetTradeIdForNewTag(null); }} 
+                  className="px-3.5 py-1.5 bg-slate-100 text-slate-600 rounded-xl text-xs font-semibold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  className="px-4 py-1.5 bg-[#ec3044] hover:bg-[#d4283b] text-white rounded-xl text-xs font-bold shadow-md cursor-pointer"
+                >
+                  Create & Select
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Global Add Trade Modal */}
       <AddTradeModal isOpen={isAddTradeOpen} onClose={() => { setIsAddTradeOpen(false); fetchCloudData(); }} />
