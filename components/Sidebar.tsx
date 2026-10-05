@@ -161,7 +161,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
   const existingGroupNames = Array.from(new Set(accounts.map(a => a.groupName).filter(Boolean)));
   const existingFirms = Array.from(new Set(accounts.map(a => a.firm).filter(Boolean)));
 
-  // Star / Toggle Account as Group Leader
+  // Toggle Account as Group Leader
   const handleToggleLeader = async (account: TradingAccount) => {
     if (!account.id || !account.groupName) return;
 
@@ -175,10 +175,8 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
         const isCurrent = acc.id === account.id;
         const targetLeaderState = isCurrent ? makeLeader : false;
 
-        // 1. Supabase
         await supabase.from('accounts').update({ is_leader: targetLeaderState }).eq('id', acc.id);
 
-        // 2. Dexie
         if (db.accounts && acc.id) {
           await db.accounts.update(Number(acc.id), { isLeader: targetLeaderState });
         }
@@ -192,7 +190,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
     }
   };
 
-  // Parser: Tradovate CSV statements
+  // Robust Tradovate CSV Parser
   const parseTradovateCSV = (csvText: string): Partial<TradeItem>[] => {
     const lines = csvText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     if (lines.length < 2) return [];
@@ -200,36 +198,130 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
     const headers = lines[0].split(',').map(h => h.replace(/['"]+/g, '').trim().toLowerCase());
     const parsedRows: Partial<TradeItem>[] = [];
 
-    const symbolIdx = headers.findIndex(h => h.includes('contract') || h.includes('symbol') || h.includes('product'));
-    const sideIdx = headers.findIndex(h => h === 'b/s' || h === 'side' || h.includes('action'));
-    const qtyIdx = headers.findIndex(h => h.includes('qty') || h.includes('size') || h.includes('contracts') || h.includes('quantity'));
-    const priceIdx = headers.findIndex(h => h.includes('price') || h.includes('fill price') || h.includes('avg price'));
-    const pnlIdx = headers.findIndex(h => h.includes('pnl') || h.includes('p&l') || h.includes('profit') || h.includes('net'));
-    const timeIdx = headers.findIndex(h => h.includes('time') || h.includes('date') || h.includes('timestamp'));
+    const cleanNumber = (val: string): number => {
+      if (!val) return 0;
+      const cleaned = val.replace(/[\$,]/g, '').trim();
+      if (cleaned.startsWith('(') && cleaned.endsWith(')')) {
+        return -parseFloat(cleaned.slice(1, -1)) || 0;
+      }
+      return parseFloat(cleaned) || 0;
+    };
+
+    // Format A: Tradovate "Performance / Closed Positions" Report
+    const isPerformanceReport = headers.includes('buyprice') && headers.includes('sellprice') && headers.includes('pnl');
+
+    if (isPerformanceReport) {
+      const symbolIdx = headers.indexOf('symbol');
+      const qtyIdx = headers.indexOf('qty');
+      const buyPriceIdx = headers.indexOf('buyprice');
+      const sellPriceIdx = headers.indexOf('sellprice');
+      const pnlIdx = headers.indexOf('pnl');
+      const boughtTimeIdx = headers.indexOf('boughttimestamp');
+      const soldTimeIdx = headers.indexOf('soldtimestamp');
+
+      for (let i = 1; i < lines.length; i++) {
+        const parts = lines[i].split(',').map(p => p.replace(/['"]+/g, '').trim());
+        if (parts.length < headers.length) continue;
+
+        const symbol = (symbolIdx >= 0 ? parts[symbolIdx] : 'NQ').toUpperCase();
+        const qty = cleanNumber(parts[qtyIdx]) || 1;
+        const buyPrice = cleanNumber(parts[buyPriceIdx]);
+        const sellPrice = cleanNumber(parts[sellPriceIdx]);
+        const netPnL = cleanNumber(parts[pnlIdx]);
+
+        const boughtStr = parts[boughtTimeIdx] || '';
+        const soldStr = parts[soldTimeIdx] || '';
+
+        const parseDateTime = (dtStr: string) => {
+          if (!dtStr) return { date: new Date().toISOString().split('T')[0], time: '09:30:00', timestamp: 0 };
+          const [dPart, tPart] = dtStr.split(' ');
+          let isoDate = dPart;
+          if (dPart && dPart.includes('/')) {
+            const [m, d, y] = dPart.split('/');
+            if (m && d && y) {
+              isoDate = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+            }
+          }
+          const time = tPart || '09:30:00';
+          const timestamp = new Date(`${isoDate}T${time}`).getTime() || 0;
+          return { date: isoDate, time, timestamp };
+        };
+
+        const bInfo = parseDateTime(boughtStr);
+        const sInfo = parseDateTime(soldStr);
+
+        // Bought first = LONG, Sold first = SHORT
+        const isLong = bInfo.timestamp <= sInfo.timestamp;
+        const side = isLong ? 'LONG' : 'SHORT';
+        const entryPrice = isLong ? buyPrice : sellPrice;
+        const exitPrice = isLong ? sellPrice : buyPrice;
+        const openDate = isLong ? bInfo.date : sInfo.date;
+        const entryTime = isLong ? bInfo.time : sInfo.time;
+        const exitTime = isLong ? sInfo.time : bInfo.time;
+
+        const points = side === 'LONG' ? (exitPrice - entryPrice) : (entryPrice - exitPrice);
+        const ticks = points * 4;
+
+        parsedRows.push({
+          symbol,
+          openDate,
+          entryTime,
+          exitTime,
+          side: side as 'LONG' | 'SHORT',
+          contractsTraded: qty,
+          entryPrice,
+          exitPrice,
+          netPnL,
+          grossPnL: netPnL,
+          commissions: 0,
+          points: Number(points.toFixed(2)),
+          ticks: Number(ticks.toFixed(2)),
+          ticksPerContract: 4,
+          status: netPnL > 0 ? 'WIN' : netPnL < 0 ? 'LOSS' : 'BE'
+        });
+      }
+      return parsedRows;
+    }
+
+    // Format B: Tradovate "Orders / Fills" Report
+    const symbolIdx = headers.findIndex(h => (h === 'contract' || h === 'symbol' || h === 'product') && !h.startsWith('_'));
+    const sideIdx = headers.findIndex(h => (h === 'b/s' || h === 'side' || h === 'action') && !h.startsWith('_'));
+    const qtyIdx = headers.findIndex(h => (h === 'qty' || h === 'size' || h === 'contracts' || h === 'quantity') && !h.startsWith('_'));
+    const priceIdx = headers.findIndex(h => (h === 'price' || h === 'fill price' || h === 'avg price' || h === 'avgprice') && !h.startsWith('_'));
+    const pnlIdx = headers.findIndex(h => (h === 'pnl' || h === 'p&l' || h === 'profit' || h === 'net') && !h.startsWith('_'));
+    const timeIdx = headers.findIndex(h => (h === 'time' || h === 'date' || h === 'timestamp' || h === 'filltime') && !h.startsWith('_'));
 
     for (let i = 1; i < lines.length; i++) {
       const parts = lines[i].split(',').map(p => p.replace(/['"]+/g, '').trim());
       if (parts.length < headers.length) continue;
 
-      const symbol = symbolIdx >= 0 ? parts[symbolIdx] : 'NQ';
+      const symbol = (symbolIdx >= 0 ? parts[symbolIdx] : 'NQ').toUpperCase();
       const sideRaw = sideIdx >= 0 ? parts[sideIdx].toUpperCase() : 'BUY';
       const side = sideRaw.includes('B') ? 'LONG' : 'SHORT';
-      const qty = qtyIdx >= 0 ? parseFloat(parts[qtyIdx]) || 1 : 1;
-      const price = priceIdx >= 0 ? parseFloat(parts[priceIdx]) || 0 : 0;
-      const netPnL = pnlIdx >= 0 ? parseFloat(parts[pnlIdx]) || 0 : 0;
-      
+      const qty = cleanNumber(parts[qtyIdx]) || 1;
+      const price = cleanNumber(parts[priceIdx]);
+      const netPnL = cleanNumber(parts[pnlIdx]);
+
       const rawTime = timeIdx >= 0 ? parts[timeIdx] : new Date().toISOString();
       let openDate = new Date().toISOString().split('T')[0];
       let entryTime = '09:30:00';
 
       if (rawTime.includes(' ') || rawTime.includes('T')) {
         const splitParts = rawTime.split(/[ T]/);
-        if (splitParts[0]) openDate = splitParts[0];
+        if (splitParts[0]) {
+          const dPart = splitParts[0];
+          if (dPart.includes('/')) {
+            const [m, d, y] = dPart.split('/');
+            if (m && d && y) openDate = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+          } else {
+            openDate = dPart;
+          }
+        }
         if (splitParts[1]) entryTime = splitParts[1];
       }
 
       parsedRows.push({
-        symbol: symbol.toUpperCase(),
+        symbol,
         openDate,
         entryTime,
         exitTime: entryTime,
@@ -341,7 +433,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
       setUploadStatus({
         accountId: account.id,
         status: 'success',
-        message: `Imported ${savedCount} trades into Leader ${account.name} & cloned to all follower accounts in group '${account.groupName}'!`
+        message: `Imported ${savedCount} trades into Leader ${account.name} & cloned to follower accounts in group '${account.groupName}'!`
       });
 
       window.dispatchEvent(new CustomEvent('account-filter-changed'));
@@ -756,7 +848,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
 
         </div>
 
-        {/* Footer: Logout & Collapse Buttons */}
+        {/* Footer */}
         <div className="pt-4 border-t border-slate-100 space-y-2">
           <button
             onClick={handleLogout}
@@ -793,7 +885,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
 
       </aside>
 
-      {/* ACCOUNT MANAGER DRAWER SIDEBAR WITH LEADER STAR & AUTO-REPLICATION DROPZONES */}
+      {/* ACCOUNT MANAGER DRAWER WITH LEADER STAR & TRADOVATE DROPZONES */}
       {isAccountManagerOpen && (
         <div 
           onClick={() => {
@@ -812,7 +904,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
               <div className="flex items-center justify-between border-b border-slate-100 pb-4">
                 <div>
                   <h2 className="text-base font-black text-slate-900">Account Manager</h2>
-                  <p className="text-xs text-slate-500 font-medium">Star your group leader account (⭐). Uploading to the leader replicates to all followers.</p>
+                  <p className="text-xs text-slate-500 font-medium">Star your group leader account (⭐). Uploading to the leader automatically replicates trades to all follower accounts.</p>
                 </div>
                 <button 
                   onClick={() => {
