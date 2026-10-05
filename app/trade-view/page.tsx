@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '@/lib/db';
 import { cloudDb } from '@/lib/cloudDb';
+import { syncLeaderTradeUpdates, deleteLeaderTradeCopies } from '@/lib/copier';
 import { 
   Filter, 
   Calendar, 
@@ -22,7 +23,8 @@ import {
   ExternalLink,
   GripHorizontal,
   Wallet,
-  ArrowDownRight
+  ArrowDownRight,
+  Copy
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import AddTradeModal from '@/components/AddTradeModal';
@@ -236,20 +238,23 @@ export default function TradeViewPage() {
     return true;
   });
 
-  // Filter adjustments based on active sidebar account/group selection
-  const filteredAdjustments = adjustments.filter(adj => {
-    if (activeFilterSelection.type === 'account') {
-      const selectedAccObj = accounts.find(a => a.name === activeFilterSelection.name);
-      if (!selectedAccObj) return String(adj.accountId) === String(activeFilterSelection.name);
-      return String(adj.accountId) === String(selectedAccObj.id) || String(adj.accountId) === activeFilterSelection.name;
-    } else if (activeFilterSelection.type === 'group') {
-      const groupAccountIds = accounts
-        .filter(a => a.groupName === activeFilterSelection.name)
-        .map(a => String(a.id));
-      return groupAccountIds.includes(String(adj.accountId));
-    }
-    return true;
-  });
+  // Filter adjustments based on active sidebar account/group selection (excluding orphaned adjustments)
+  const validAccountIds = new Set(accounts.map(a => String(a.id)));
+  const filteredAdjustments = adjustments
+    .filter(adj => validAccountIds.has(String(adj.accountId)))
+    .filter(adj => {
+      if (activeFilterSelection.type === 'account') {
+        const selectedAccObj = accounts.find(a => a.name === activeFilterSelection.name);
+        if (!selectedAccObj) return String(adj.accountId) === String(activeFilterSelection.name);
+        return String(adj.accountId) === String(selectedAccObj.id);
+      } else if (activeFilterSelection.type === 'group') {
+        const groupAccountIds = accounts
+          .filter(a => a.groupName === activeFilterSelection.name)
+          .map(a => String(a.id));
+        return groupAccountIds.includes(String(adj.accountId));
+      }
+      return true;
+    });
 
   // 2. Sorting Logic
   const trades = [...filteredTrades].sort((a, b) => {
@@ -292,10 +297,12 @@ export default function TradeViewPage() {
 
   const handleMassDelete = async () => {
     if (selectedTrades.length === 0) return;
-    if (confirm(`Are you sure you want to delete ${selectedTrades.length} trade(s)?`)) {
+    if (confirm(`Are you sure you want to delete ${selectedTrades.length} trade(s)? Any group follower copies will also be deleted.`)) {
       const { supabase } = await import('@/lib/supabase');
       for (const id of selectedTrades) {
         await supabase.from('trades').delete().eq('id', id);
+        await deleteLeaderTradeCopies(id);
+        await db.trades.delete(id);
       }
       setSelectedTrades([]);
       setShowBulkMenu(false);
@@ -309,7 +316,11 @@ export default function TradeViewPage() {
     const { supabase } = await import('@/lib/supabase');
     for (const id of selectedTrades) {
       const fieldKey = tagModalType === 'setup' ? 'setup_tag' : tagModalType === 'mistake' ? 'mistake_tag' : 'strategy';
+      const localFieldKey = tagModalType === 'setup' ? 'setupTag' : tagModalType === 'mistake' ? 'mistakeTag' : 'strategy';
+      
       await supabase.from('trades').update({ [fieldKey]: val }).eq('id', id);
+      await syncLeaderTradeUpdates(id, { [localFieldKey]: val });
+      await db.trades.update(id, { [localFieldKey]: val });
     }
     setTagModalType(null);
     setTagInputVal('');
@@ -335,9 +346,15 @@ export default function TradeViewPage() {
         account: finalVal || null,
         account_group: matchedAcc ? matchedAcc.groupName : null
       }).eq('id', tradeId);
+      await db.trades.update(tradeId, { 
+        account: finalVal || undefined,
+        accountGroup: matchedAcc ? matchedAcc.groupName : undefined
+      });
     } else {
       const dbField = field === 'setupTag' ? 'setup_tag' : field === 'mistakeTag' ? 'mistake_tag' : 'strategy';
       await supabase.from('trades').update({ [dbField]: finalVal || null }).eq('id', tradeId);
+      await syncLeaderTradeUpdates(tradeId, { [field]: finalVal });
+      await db.trades.update(tradeId, { [field]: finalVal });
     }
 
     setEditingCellTradeId(null);
@@ -355,14 +372,20 @@ export default function TradeViewPage() {
       const exists = await db.strategies.where('name').equals(name).first();
       if (!exists) await db.strategies.put({ name });
       await supabase.from('trades').update({ strategy: name }).eq('id', targetTradeIdForNewTag);
+      await syncLeaderTradeUpdates(targetTradeIdForNewTag, { strategy: name });
+      await db.trades.update(targetTradeIdForNewTag, { strategy: name });
     } else if (activeNewModalType === 'setup') {
       const exists = await db.setups.where('name').equals(name).first();
       if (!exists) await db.setups.put({ name });
       await supabase.from('trades').update({ setup_tag: name }).eq('id', targetTradeIdForNewTag);
+      await syncLeaderTradeUpdates(targetTradeIdForNewTag, { setupTag: name });
+      await db.trades.update(targetTradeIdForNewTag, { setupTag: name });
     } else if (activeNewModalType === 'mistake') {
       const exists = await db.mistakes.where('name').equals(name).first();
       if (!exists) await db.mistakes.put({ name });
       await supabase.from('trades').update({ mistake_tag: name }).eq('id', targetTradeIdForNewTag);
+      await syncLeaderTradeUpdates(targetTradeIdForNewTag, { mistakeTag: name });
+      await db.trades.update(targetTradeIdForNewTag, { mistakeTag: name });
     }
 
     setActiveNewModalType(null);
@@ -863,6 +886,8 @@ export default function TradeViewPage() {
               ) : (
                 trades.map((trade) => {
                   const isSelected = selectedTrades.includes(trade.id!);
+                  const isFollowerCopy = Boolean(trade.leaderTradeId || trade.leader_trade_id);
+
                   return (
                     <tr 
                       key={trade.id} 
@@ -890,8 +915,13 @@ export default function TradeViewPage() {
                             return <td key={col.id} className="py-3.5 px-4 font-medium text-slate-600">{trade.openDate}</td>;
                           case 'symbol':
                             return (
-                              <td key={col.id} className="py-3.5 px-4 font-bold text-[#ec3044] hover:underline">
-                                {trade.symbol}
+                              <td key={col.id} className="py-3.5 px-4 font-bold text-[#ec3044] hover:underline flex items-center gap-1.5">
+                                <span>{trade.symbol}</span>
+                                {isFollowerCopy && (
+                                  <span title="Group Follower Copy" className="text-slate-400">
+                                    <Copy className="w-3 h-3 text-slate-400" />
+                                  </span>
+                                )}
                               </td>
                             );
                           case 'account':
@@ -1063,6 +1093,7 @@ export default function TradeViewPage() {
                   onClick={async () => { 
                     const { supabase } = await import('@/lib/supabase');
                     await supabase.from('trades').update({ account: a.name, account_group: a.groupName }).eq('id', contextMenu.tradeId);
+                    await db.trades.update(contextMenu.tradeId, { account: a.name, accountGroup: a.groupName });
                     setContextMenu(null);
                     fetchCloudData();
                   }}
@@ -1078,9 +1109,11 @@ export default function TradeViewPage() {
 
           <button 
             onClick={async () => {
-              if (confirm('Are you sure you want to delete this trade?')) {
+              if (confirm('Are you sure you want to delete this trade? Follower copies across your group will also be deleted.')) {
                 const { supabase } = await import('@/lib/supabase');
                 await supabase.from('trades').delete().eq('id', contextMenu.tradeId);
+                await deleteLeaderTradeCopies(contextMenu.tradeId);
+                await db.trades.delete(contextMenu.tradeId);
                 setContextMenu(null);
                 fetchCloudData();
               }

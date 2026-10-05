@@ -34,6 +34,7 @@ export interface TradeItem {
   status: 'WIN' | 'LOSS' | 'BE';
   account?: string;       // Linked account name
   accountGroup?: string;  // Linked account group name
+  leaderTradeId?: number; // References the leader trade ID if this is a follower copy
 }
 
 export interface TradingAccount {
@@ -43,9 +44,9 @@ export interface TradingAccount {
   type: 'Eval' | 'Funded' | 'Live';
   firm: string;
   balance: number;
-  profitTarget?: number; // Target dollar profit or target balance to pass
-  maxDrawdown?: number;  // Max drawdown limit threshold in dollars
-  inputType: 'Tradovate' | 'AMP'; // Required data input type for statement uploads
+  profitTarget?: number;
+  maxDrawdown?: number;
+  inputType: 'Tradovate' | 'AMP';
 }
 
 export interface AccountAdjustment {
@@ -93,9 +94,8 @@ export class TradeZellaDatabase extends Dexie {
   constructor() {
     super('TradeZellaDB');
 
-    // Schema v8: Adds profitTarget and maxDrawdown to accounts table
-    this.version(8).stores({
-      trades: '++id, openDate, symbol, status, side, strategy, account, accountGroup',
+    this.version(9).stores({
+      trades: '++id, openDate, symbol, status, side, strategy, account, accountGroup, leaderTradeId',
       accounts: '++id, name, groupName, type, firm, inputType, profitTarget, maxDrawdown',
       strategies: '++id, &name',
       setups: '++id, &name',
