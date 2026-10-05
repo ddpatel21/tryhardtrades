@@ -16,16 +16,16 @@ import {
   Target, 
   Plus, 
   X, 
-  RotateCcw,
-  ArrowUpDown,
-  ArrowUp,
-  ArrowDown,
-  ExternalLink,
-  GripHorizontal,
-  Wallet,
-  ArrowDownRight,
-  Layers,
-  Sparkles
+  RotateCcw, 
+  ArrowUpDown, 
+  ArrowUp, 
+  ArrowDown, 
+  ExternalLink, 
+  GripHorizontal, 
+  Wallet, 
+  ArrowDownRight, 
+  Layers, 
+  Sparkles 
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import AddTradeModal from '@/components/AddTradeModal';
@@ -49,20 +49,20 @@ interface AccountAdjustment {
 }
 
 const INITIAL_COLUMNS: ColumnConfig[] = [
-  { id: 'openDate', label: 'Open date', sortable: true },
+  { id: 'openDate', label: 'Date', sortable: true },
   { id: 'symbol', label: 'Symbol' },
-  { id: 'account', label: 'Account / Group' },
+  { id: 'account', label: 'Scope' },
   { id: 'status', label: 'Status' },
   { id: 'side', label: 'Side' },
-  { id: 'contractsTraded', label: 'Contracts' },
-  { id: 'entryPrice', label: 'Entry price' },
-  { id: 'exitPrice', label: 'Exit price' },
+  { id: 'contractsTraded', label: 'Qty' },
+  { id: 'entryPrice', label: 'Entry' },
+  { id: 'exitPrice', label: 'Exit' },
   { id: 'commissions', label: 'Fees' },
-  { id: 'netPnL', label: 'Magnified Net P&L', sortable: true },
-  { id: 'setupTag', label: 'Setup Tag' },
+  { id: 'netPnL', label: 'Net P&L', sortable: true },
+  { id: 'setupTag', label: 'Setup' },
   { id: 'strategy', label: 'Strategy' },
-  { id: 'mistakeTag', label: 'Mistake Tag' },
-  { id: 'closeTime', label: 'Close time' },
+  { id: 'mistakeTag', label: 'Mistake' },
+  { id: 'closeTime', label: 'Time' },
 ];
 
 export default function TradeViewPage() {
@@ -200,7 +200,7 @@ export default function TradeViewPage() {
     };
   }, []);
 
-  // 1. Base Filter by Scope
+  // Filter based on selected scope
   const scopedTrades = rawTrades.filter((trade) => {
     if (activeFilterSelection.type === 'account') {
       if (trade.account !== activeFilterSelection.name) return false;
@@ -229,21 +229,21 @@ export default function TradeViewPage() {
     return true;
   });
 
-  // Magnification & Clustering Logic
   const isIndividualAccountView = activeFilterSelection.type === 'account';
 
+  // Consolidate copied trades into 1 row per execution
   const magnifiedTrades = React.useMemo(() => {
     if (isIndividualAccountView) {
       return scopedTrades.map(t => ({
         ...t,
         magnifiedPnL: t.netPnL || 0,
         individualPnL: t.netPnL || 0,
+        magnifiedCommissions: t.commissions || 0,
         accountCount: 1,
         allIds: [t.id]
       }));
     }
 
-    // Cluster executions by execution key (symbol + openDate + entryTime + side)
     const clusters: Record<string, {
       baseTrade: any;
       allIds: any[];
@@ -272,22 +272,22 @@ export default function TradeViewPage() {
     });
 
     return Object.values(clusters).map(({ baseTrade, allIds, uniqueAccountNames }) => {
-      // Multiply the trade's single-account return by the exact count of unique accounts traded
-      const uniqueAccountCount = uniqueAccountNames.size > 0 ? uniqueAccountNames.size : 1;
+      const count = uniqueAccountNames.size > 0 ? uniqueAccountNames.size : 1;
       const individualPnL = Number(baseTrade.netPnL) || 0;
-      const magnifiedPnL = individualPnL * uniqueAccountCount;
+      const magnifiedPnL = individualPnL * count;
+      const magnifiedCommissions = Number(baseTrade.commissions || 0) * count;
 
       return {
         ...baseTrade,
         magnifiedPnL,
         individualPnL,
-        accountCount: uniqueAccountCount,
+        magnifiedCommissions,
+        accountCount: count,
         allIds
       };
     });
   }, [scopedTrades, isIndividualAccountView]);
 
-  // Adjustments filter
   const validAccountIds = new Set(accounts.map(a => String(a.id)));
   const filteredAdjustments = adjustments
     .filter(adj => validAccountIds.has(String(adj.accountId)))
@@ -305,7 +305,6 @@ export default function TradeViewPage() {
       return true;
     });
 
-  // 3. Sorting
   const trades = [...magnifiedTrades].sort((a, b) => {
     if (!sortField) return 0;
 
@@ -346,9 +345,8 @@ export default function TradeViewPage() {
 
   const handleMassDelete = async () => {
     if (selectedTrades.length === 0) return;
-    if (confirm(`Are you sure you want to delete ${selectedTrades.length} execution(s)? All follower copies across your accounts will also be deleted.`)) {
+    if (confirm(`Delete ${selectedTrades.length} execution(s)? Follower copies will also be removed.`)) {
       const { supabase } = await import('@/lib/supabase');
-      
       for (const id of selectedTrades) {
         const match = trades.find(t => t.id === id);
         const idsToDelete = match?.allIds || [id];
@@ -525,7 +523,6 @@ export default function TradeViewPage() {
     setDropTargetColumnId(null);
   };
 
-  // KPI Calculations across magnified trades
   const totalPnL = trades.reduce((acc, t) => acc + (t.magnifiedPnL || 0), 0);
   const winTrades = trades.filter(t => (t.magnifiedPnL || 0) > 0);
   const lossTrades = trades.filter(t => (t.magnifiedPnL || 0) < 0);
@@ -551,19 +548,18 @@ export default function TradeViewPage() {
     .reduce((sum, a) => sum + Number(a.amount), 0);
 
   const netBalanceAfterAdjustments = totalPnL + totalDeposits - totalWithdrawals;
-
   const hasActiveFilters = filterSymbol || filterSide !== 'ALL' || filterStatus !== 'ALL' || startDate || endDate;
 
   return (
-    <div className="p-8 bg-[#F8F9FD] min-h-screen text-slate-800 font-sans">
+    <div className="p-6 bg-[#F8F9FD] min-h-screen text-slate-800 font-sans w-full max-w-full overflow-hidden">
       
       {/* Top Filter Bar */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+          <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
             <span>Trade View</span>
             {!isIndividualAccountView && (
-              <span className="text-xs bg-[#ec3044]/10 text-[#ec3044] px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1 border border-[#ec3044]/20">
+              <span className="text-[10px] bg-[#ec3044]/10 text-[#ec3044] px-2 py-0.5 rounded-full font-bold flex items-center gap-1 border border-[#ec3044]/20">
                 <Sparkles className="w-3 h-3" /> Magnified View
               </span>
             )}
@@ -573,49 +569,45 @@ export default function TradeViewPage() {
               Scoped to {activeFilterSelection.type === 'group' ? 'Group:' : 'Account:'} {activeFilterSelection.name}
             </p>
           ) : (
-            <p className="text-xs text-slate-400 mt-0.5">
-              Mirrored trades across accounts are consolidated into unified executions with magnified P&L.
-            </p>
+            <p className="text-xs text-slate-400 mt-0.5">Unified executions with aggregate group magnification.</p>
           )}
         </div>
         
-        <div className="flex items-center gap-3 relative">
-          
+        <div className="flex items-center gap-2 relative">
           <button 
             onClick={() => setIsAddTradeOpen(true)} 
-            className="flex items-center gap-2 bg-[#ec3044] hover:bg-[#d4283b] text-white font-bold px-4 py-1.5 rounded-lg text-sm shadow-md transition cursor-pointer"
+            className="flex items-center gap-1.5 bg-[#ec3044] hover:bg-[#d4283b] text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm transition cursor-pointer"
           >
-            <Plus className="w-4 h-4" /> Add Trade
+            <Plus className="w-3.5 h-3.5" /> Add Trade
           </button>
 
-          {/* FILTERS BUTTON & POPOVER */}
           <div className="relative">
             <button 
               onClick={() => { setShowFilterMenu(!showFilterMenu); setShowDateMenu(false); }}
-              className={`flex items-center gap-2 bg-white border px-3.5 py-1.5 rounded-lg text-sm font-medium cursor-pointer transition ${
+              className={`flex items-center gap-1.5 bg-white border px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition ${
                 filterSymbol || filterSide !== 'ALL' || filterStatus !== 'ALL'
                   ? 'border-[#ec3044] text-[#ec3044] bg-[#ec3044]/5 font-bold'
                   : 'border-slate-200 text-slate-700 hover:bg-slate-50'
               }`}
             >
-              <Filter className="w-4 h-4 text-[#ec3044]" /> Filters <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+              <Filter className="w-3.5 h-3.5 text-[#ec3044]" /> Filters <ChevronDown className="w-3 h-3 text-slate-400" />
             </button>
 
             {showFilterMenu && (
-              <div className="absolute right-0 top-full mt-2 w-64 bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 p-4 space-y-3 text-xs">
-                <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+              <div className="absolute right-0 top-full mt-2 w-60 bg-white border border-slate-200 rounded-xl shadow-xl z-50 p-3 space-y-2.5 text-xs">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-1.5">
                   <span className="font-bold text-slate-900">Filter Trades</span>
-                  <button onClick={() => setShowFilterMenu(false)} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4"/></button>
+                  <button onClick={() => setShowFilterMenu(false)} className="text-slate-400 hover:text-slate-600"><X className="w-3.5 h-3.5"/></button>
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-500 mb-1">Symbol Search</label>
+                  <label className="block text-[10px] font-bold text-slate-500 mb-1">Symbol</label>
                   <input 
                     type="text" 
                     value={filterSymbol} 
                     onChange={e => setFilterSymbol(e.target.value)} 
                     placeholder="E.g. NQ" 
-                    className="w-full border border-slate-200 rounded-lg p-2 font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#ec3044]"
+                    className="w-full border border-slate-200 rounded-lg p-1.5 font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#ec3044]"
                   />
                 </div>
 
@@ -625,7 +617,7 @@ export default function TradeViewPage() {
                     <select 
                       value={filterSide} 
                       onChange={e => setFilterSide(e.target.value as any)} 
-                      className="w-full border border-slate-200 rounded-lg p-2 font-bold text-slate-800 focus:outline-none"
+                      className="w-full border border-slate-200 rounded-lg p-1.5 font-bold text-slate-800 focus:outline-none"
                     >
                       <option value="ALL">All Sides</option>
                       <option value="LONG">LONG</option>
@@ -638,7 +630,7 @@ export default function TradeViewPage() {
                     <select 
                       value={filterStatus} 
                       onChange={e => setFilterStatus(e.target.value as any)} 
-                      className="w-full border border-slate-200 rounded-lg p-2 font-bold text-slate-800 focus:outline-none"
+                      className="w-full border border-slate-200 rounded-lg p-1.5 font-bold text-slate-800 focus:outline-none"
                     >
                       <option value="ALL">All</option>
                       <option value="WIN">WIN</option>
@@ -648,10 +640,10 @@ export default function TradeViewPage() {
                 </div>
 
                 <div className="flex justify-between pt-2 border-t border-slate-100">
-                  <button onClick={resetFilters} className="text-slate-400 hover:text-slate-600 flex items-center gap-1 text-[11px] font-bold cursor-pointer">
+                  <button onClick={resetFilters} className="text-slate-400 hover:text-slate-600 flex items-center gap-1 text-[10px] font-bold cursor-pointer">
                     <RotateCcw className="w-3 h-3" /> Reset
                   </button>
-                  <button onClick={() => setShowFilterMenu(false)} className="px-3 py-1 bg-[#ec3044] text-white font-bold rounded-lg text-xs cursor-pointer">
+                  <button onClick={() => setShowFilterMenu(false)} className="px-2.5 py-1 bg-[#ec3044] text-white font-bold rounded-md text-[11px] cursor-pointer">
                     Apply
                   </button>
                 </div>
@@ -659,51 +651,50 @@ export default function TradeViewPage() {
             )}
           </div>
 
-          {/* DATE RANGE BUTTON & POPOVER */}
           <div className="relative">
             <button 
               onClick={() => { setShowDateMenu(!showDateMenu); setShowFilterMenu(false); }}
-              className={`flex items-center gap-2 bg-white border px-3.5 py-1.5 rounded-lg text-sm font-medium cursor-pointer transition ${
+              className={`flex items-center gap-1.5 bg-white border px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition ${
                 startDate || endDate
                   ? 'border-[#ec3044] text-[#ec3044] bg-[#ec3044]/5 font-bold'
                   : 'border-slate-200 text-slate-700 hover:bg-slate-50'
               }`}
             >
-              <Calendar className="w-4 h-4 text-[#ec3044]" /> Date range <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+              <Calendar className="w-3.5 h-3.5 text-[#ec3044]" /> Dates <ChevronDown className="w-3 h-3 text-slate-400" />
             </button>
 
             {showDateMenu && (
-              <div className="absolute right-0 top-full mt-2 w-64 bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 p-4 space-y-3 text-xs">
-                <div className="flex justify-between items-center border-b border-slate-100 pb-2">
-                  <span className="font-bold text-slate-900">Custom Date Filter</span>
-                  <button onClick={() => setShowDateMenu(false)} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4"/></button>
+              <div className="absolute right-0 top-full mt-2 w-60 bg-white border border-slate-200 rounded-xl shadow-xl z-50 p-3 space-y-2.5 text-xs">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-1.5">
+                  <span className="font-bold text-slate-900">Date Range</span>
+                  <button onClick={() => setShowDateMenu(false)} className="text-slate-400 hover:text-slate-600"><X className="w-3.5 h-3.5"/></button>
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-500 mb-1">Start Date</label>
+                  <label className="block text-[10px] font-bold text-slate-500 mb-1">Start</label>
                   <input 
                     type="date" 
                     value={startDate} 
                     onChange={e => setStartDate(e.target.value)} 
-                    className="w-full border border-slate-200 rounded-lg p-2 font-bold text-slate-800 focus:outline-none"
+                    className="w-full border border-slate-200 rounded-lg p-1.5 font-bold text-slate-800 focus:outline-none"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-500 mb-1">End Date</label>
+                  <label className="block text-[10px] font-bold text-slate-500 mb-1">End</label>
                   <input 
                     type="date" 
                     value={endDate} 
                     onChange={e => setEndDate(e.target.value)} 
-                    className="w-full border border-slate-200 rounded-lg p-2 font-bold text-slate-800 focus:outline-none"
+                    className="w-full border border-slate-200 rounded-lg p-1.5 font-bold text-slate-800 focus:outline-none"
                   />
                 </div>
 
                 <div className="flex justify-between pt-2 border-t border-slate-100">
-                  <button onClick={() => { setStartDate(''); setEndDate(''); }} className="text-slate-400 hover:text-slate-600 flex items-center gap-1 text-[11px] font-bold cursor-pointer">
+                  <button onClick={() => { setStartDate(''); setEndDate(''); }} className="text-slate-400 hover:text-slate-600 text-[10px] font-bold cursor-pointer">
                     Clear
                   </button>
-                  <button onClick={() => setShowDateMenu(false)} className="px-3 py-1 bg-[#ec3044] text-white font-bold rounded-lg text-xs cursor-pointer">
+                  <button onClick={() => setShowDateMenu(false)} className="px-2.5 py-1 bg-[#ec3044] text-white font-bold rounded-md text-[11px] cursor-pointer">
                     Apply
                   </button>
                 </div>
@@ -714,135 +705,78 @@ export default function TradeViewPage() {
           {hasActiveFilters && (
             <button 
               onClick={resetFilters} 
-              className="text-xs font-bold text-[#ec3044] hover:underline flex items-center gap-1 cursor-pointer bg-[#ec3044]/10 px-2.5 py-1.5 rounded-lg border border-[#ec3044]/20"
+              className="text-[11px] font-bold text-[#ec3044] hover:underline flex items-center gap-1 cursor-pointer bg-[#ec3044]/10 px-2 py-1 rounded-lg border border-[#ec3044]/20"
             >
-              <RotateCcw className="w-3 h-3" /> Reset Filters
+              <RotateCcw className="w-3 h-3" /> Reset
             </button>
           )}
-
         </div>
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-        
-        {/* CARD 1: Net cumulative P&L with Balance Breakdown */}
-        <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm flex flex-col justify-between h-36">
-          <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5 mb-6">
+        <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-xs flex flex-col justify-between h-28">
+          <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-500">
             <span>Net cumulative P&L</span>
-            <div className="relative group cursor-pointer inline-flex">
-              <span className="bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded text-[10px] font-bold hover:bg-slate-200 transition">
-                {trades.length} {trades.length === 1 ? 'execution' : 'executions'}
-              </span>
-              <div className="absolute left-0 top-full mt-1.5 hidden group-hover:block bg-slate-900 text-white text-[10px] font-semibold py-1 px-2.5 rounded-md shadow-xl whitespace-nowrap z-50">
-                Consolidated across {scopedTrades.length} individual trade records
-              </div>
-            </div>
+            <span className="bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded text-[9px] font-bold">
+              {trades.length}
+            </span>
           </div>
           <div>
-            <div className={`text-3xl font-black ${totalPnL >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+            <div className={`text-2xl font-black ${totalPnL >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
               {totalPnL >= 0 ? `$${totalPnL.toFixed(2)}` : `-$${Math.abs(totalPnL).toFixed(2)}`}
             </div>
 
             {(totalWithdrawals > 0 || totalDeposits > 0) && (
-              <div className="text-[11px] font-bold mt-1 flex items-center gap-1">
+              <div className="text-[10px] font-bold mt-0.5 flex items-center gap-1">
                 <span className="text-slate-400">Bal:</span>
-                <span className={netBalanceAfterAdjustments >= 0 ? "text-emerald-600/80 font-mono" : "text-rose-600/80 font-mono"}>
+                <span className={netBalanceAfterAdjustments >= 0 ? "text-emerald-600 font-mono" : "text-rose-600 font-mono"}>
                   ${netBalanceAfterAdjustments.toFixed(2)}
                 </span>
                 {totalWithdrawals > 0 && (
-                  <span className="text-rose-500/80 text-[10px] font-semibold flex items-center">
-                    <ArrowDownRight className="w-3 h-3" />-${totalWithdrawals.toFixed(2)}
+                  <span className="text-rose-500 text-[9px] font-semibold flex items-center">
+                    <ArrowDownRight className="w-2.5 h-2.5" />-${totalWithdrawals.toFixed(2)}
                   </span>
                 )}
               </div>
             )}
           </div>
-          <div className="text-[10px] text-transparent select-none">spacer</div>
         </div>
 
-        {/* CARD 2: Profit factor */}
-        <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm flex flex-col justify-between h-36">
-          <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
+        <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-xs flex flex-col justify-between h-28">
+          <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500">
             <span>Profit factor</span>
-            <div className="relative group cursor-pointer">
-              <Info className="w-3.5 h-3.5 text-slate-400 hover:text-slate-600 transition" />
-              <div className="absolute right-0 top-full mt-1.5 hidden group-hover:block bg-slate-900 text-white text-[10px] font-medium p-2 rounded-lg shadow-xl w-48 text-center z-50 leading-tight">
-                Gross Profits / Gross Losses.
-              </div>
-            </div>
+            <Info className="w-3 h-3 text-slate-400" />
           </div>
-          <div className="flex items-center justify-between">
-            <div className="text-3xl font-black text-slate-900">{profitFactor}</div>
-            <div className="relative w-12 h-12 flex items-center justify-center">
-              <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
-                <path className="text-slate-100" strokeWidth="4" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-                <path className="text-emerald-500" strokeDasharray={`${Math.min(Number(profitFactor) * 50, 100)}, 100`} strokeWidth="4" strokeLinecap="round" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-              </svg>
-            </div>
-          </div>
-          <div className="text-[10px] text-transparent select-none">spacer</div>
+          <div className="text-2xl font-black text-slate-900">{profitFactor}</div>
         </div>
 
-        {/* CARD 3: Trade win % */}
-        <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm flex flex-col justify-between h-36">
-          <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
+        <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-xs flex flex-col justify-between h-28">
+          <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500">
             <span>Trade win %</span>
-            <div className="relative group cursor-pointer">
-              <Info className="w-3.5 h-3.5 text-slate-400 hover:text-slate-600 transition" />
-              <div className="absolute right-0 top-full mt-1.5 hidden group-hover:block bg-slate-900 text-white text-[10px] font-medium p-2 rounded-lg shadow-xl w-48 text-center z-50 leading-tight">
-                Percentage of winning executions.
-              </div>
-            </div>
+            <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1 rounded">
+              {winCount}W / {lossCount}L
+            </span>
           </div>
-          <div className="flex items-center justify-between">
-            <div className="text-3xl font-black text-slate-900">{winRate}%</div>
-            <div className="flex gap-1.5 text-[10px] font-bold">
-              <span className="text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
-                {winCount} {winCount === 1 ? 'Win' : 'Wins'}
-              </span>
-              <span className="text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
-                {lossCount} {lossCount === 1 ? 'Loss' : 'Losses'}
-              </span>
-            </div>
-          </div>
-          <div className="text-[10px] text-transparent select-none">spacer</div>
+          <div className="text-2xl font-black text-slate-900">{winRate}%</div>
         </div>
 
-        {/* CARD 4: Avg win/loss trade */}
-        <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm flex flex-col justify-between h-36">
-          <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
+        <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-xs flex flex-col justify-between h-28">
+          <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500">
             <span>Avg win/loss trade</span>
-            <div className="relative group cursor-pointer">
-              <Info className="w-3.5 h-3.5 text-slate-400 hover:text-slate-600 transition" />
-              <div className="absolute right-0 top-full mt-1.5 hidden group-hover:block bg-slate-900 text-white text-[10px] font-medium p-2 rounded-lg shadow-xl w-48 text-center z-50 leading-tight">
-                Average Win ($) / Average Loss ($).
-              </div>
-            </div>
           </div>
-          <div className={`text-3xl font-black ${Number(avgWinLossRatio) >= 1 ? 'text-emerald-500' : 'text-slate-900'}`}>
+          <div className={`text-2xl font-black ${Number(avgWinLossRatio) >= 1 ? 'text-emerald-500' : 'text-slate-900'}`}>
             {avgWinLossRatio}
           </div>
-          <div className="space-y-1">
-            <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden flex">
-              <div style={{ width: `${Math.min(Math.max((avgWin / (avgWin + avgLoss || 1)) * 100, 15), 85)}%` }} className="bg-emerald-500 h-full" />
-              <div className="bg-rose-500 h-full flex-1" />
-            </div>
-            <div className="flex justify-between text-[10px] font-mono font-bold">
-              <span className="text-emerald-600">${avgWin.toFixed(1)}</span>
-              <span className="text-rose-600">-${avgLoss.toFixed(1)}</span>
-            </div>
-          </div>
         </div>
-
       </div>
 
-      {/* Trades Table Container */}
-      <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm relative">
-        <div className="p-4 flex justify-between items-center border-b border-slate-100 bg-slate-50/50 rounded-t-2xl">
+      {/* Responsive Contained Trades Table */}
+      <div className="bg-white border border-slate-200/80 rounded-2xl shadow-xs overflow-hidden w-full">
+        <div className="p-3.5 flex justify-between items-center border-b border-slate-100 bg-slate-50/50">
           <div className="text-xs font-bold text-slate-600">
             {selectedTrades.length > 0 ? (
-              <span className="text-[#ec3044] bg-[#ec3044]/10 px-2.5 py-1 rounded-lg border border-[#ec3044]/20 font-bold">
+              <span className="text-[#ec3044] bg-[#ec3044]/10 px-2 py-0.5 rounded font-bold">
                 {selectedTrades.length} execution(s) selected
               </span>
             ) : (
@@ -850,51 +784,45 @@ export default function TradeViewPage() {
             )}
           </div>
 
-          <div className="flex items-center gap-3 relative">
-            <button className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 cursor-pointer">
-              <Settings className="w-4 h-4" />
+          <div className="flex items-center gap-2">
+            <button 
+              disabled={selectedTrades.length === 0}
+              onClick={() => setShowBulkMenu(!showBulkMenu)}
+              className={`px-3 py-1 font-bold text-xs rounded-lg border flex items-center gap-1.5 transition ${
+                selectedTrades.length > 0 
+                  ? 'bg-[#ec3044] text-white border-transparent cursor-pointer hover:bg-[#d4283b]' 
+                  : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-60'
+              }`}
+            >
+              Bulk actions <ChevronDown className="w-3 h-3" />
             </button>
 
-            <div className="relative">
-              <button 
-                disabled={selectedTrades.length === 0}
-                onClick={() => setShowBulkMenu(!showBulkMenu)}
-                className={`px-4 py-1.5 font-bold text-xs rounded-xl border flex items-center gap-2 transition ${
-                  selectedTrades.length > 0 
-                    ? 'bg-[#ec3044] text-white border-transparent shadow-md cursor-pointer hover:bg-[#d4283b]' 
-                    : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-60'
-                }`}
-              >
-                Bulk actions <ChevronDown className="w-3.5 h-3.5" />
-              </button>
-
-              {showBulkMenu && selectedTrades.length > 0 && (
-                <div className="absolute right-0 top-full mt-2 w-52 bg-white border border-slate-200 rounded-xl shadow-2xl z-50 p-1.5 text-xs font-semibold text-slate-700 space-y-1">
-                  <button onClick={() => { setTagModalType('setup'); setShowBulkMenu(false); }} className="flex items-center gap-2 w-full p-2 hover:bg-slate-50 rounded-lg text-left cursor-pointer">
-                    <Tag className="w-3.5 h-3.5 text-[#ec3044]" /> Apply Setup Tag
-                  </button>
-                  <button onClick={() => { setTagModalType('mistake'); setShowBulkMenu(false); }} className="flex items-center gap-2 w-full p-2 hover:bg-slate-50 rounded-lg text-left cursor-pointer">
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500" /> Apply Mistake Tag
-                  </button>
-                  <button onClick={() => { setTagModalType('strategy'); setShowBulkMenu(false); }} className="flex items-center gap-2 w-full p-2 hover:bg-slate-50 rounded-lg text-left cursor-pointer">
-                    <Target className="w-3.5 h-3.5 text-blue-500" /> Assign Strategy
-                  </button>
-                  <div className="border-t border-slate-100 my-1" />
-                  <button onClick={handleMassDelete} className="flex items-center gap-2 w-full p-2 hover:bg-rose-50 text-rose-600 rounded-lg text-left font-bold cursor-pointer">
-                    <Trash2 className="w-3.5 h-3.5" /> Mass Delete ({selectedTrades.length})
-                  </button>
-                </div>
-              )}
-            </div>
+            {showBulkMenu && selectedTrades.length > 0 && (
+              <div className="absolute right-6 top-52 w-48 bg-white border border-slate-200 rounded-xl shadow-xl z-50 p-1 text-xs font-semibold text-slate-700 space-y-0.5">
+                <button onClick={() => { setTagModalType('setup'); setShowBulkMenu(false); }} className="flex items-center gap-2 w-full p-1.5 hover:bg-slate-50 rounded text-left">
+                  <Tag className="w-3 h-3 text-[#ec3044]" /> Setup Tag
+                </button>
+                <button onClick={() => { setTagModalType('mistake'); setShowBulkMenu(false); }} className="flex items-center gap-2 w-full p-1.5 hover:bg-slate-50 rounded text-left">
+                  <AlertTriangle className="w-3 h-3 text-amber-500" /> Mistake Tag
+                </button>
+                <button onClick={() => { setTagModalType('strategy'); setShowBulkMenu(false); }} className="flex items-center gap-2 w-full p-1.5 hover:bg-slate-50 rounded text-left">
+                  <Target className="w-3 h-3 text-blue-500" /> Strategy
+                </button>
+                <div className="border-t border-slate-100 my-0.5" />
+                <button onClick={handleMassDelete} className="flex items-center gap-2 w-full p-1.5 hover:bg-rose-50 text-rose-600 rounded text-left font-bold">
+                  <Trash2 className="w-3 h-3" /> Mass Delete ({selectedTrades.length})
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Data Table */}
-        <div className="overflow-x-auto rounded-b-2xl">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-[#F8F9FD] text-slate-500 text-xs font-semibold border-b border-slate-200/80">
+        {/* Fit-to-screen table layout */}
+        <div className="w-full overflow-x-hidden">
+          <table className="w-full text-left text-xs table-fixed">
+            <thead className="bg-[#F8F9FD] text-slate-500 text-[11px] font-semibold border-b border-slate-200">
               <tr>
-                <th className="py-3 px-4 w-10 text-center">
+                <th className="py-2.5 px-2 w-8 text-center">
                   <input 
                     type="checkbox" 
                     onChange={toggleSelectAll} 
@@ -916,29 +844,17 @@ export default function TradeViewPage() {
                       onDragLeave={handleDragLeave}
                       onDrop={(e) => handleDrop(e, col.id)}
                       onDragEnd={handleDragEnd}
-                      onClick={() => {
-                        if (col.sortable) {
-                          handleSort(col.id as SortField);
-                        }
-                      }}
-                      className={`py-3 px-4 font-semibold text-slate-700 select-none cursor-grab active:cursor-grabbing transition relative ${
+                      onClick={() => col.sortable && handleSort(col.id as SortField)}
+                      className={`py-2.5 px-2 font-semibold text-slate-700 truncate select-none cursor-grab active:cursor-grabbing transition ${
                         col.sortable ? 'cursor-pointer hover:text-[#ec3044]' : ''
                       } ${isDragging ? 'opacity-40 bg-slate-200/50' : 'hover:bg-slate-100/60'} ${
-                        isDropTarget ? 'border-l-4 border-l-[#ec3044] bg-[#ec3044]/5' : ''
+                        isDropTarget ? 'border-l-2 border-l-[#ec3044] bg-[#ec3044]/5' : ''
                       }`}
                     >
-                      <div className="flex items-center gap-1.5">
-                        <GripHorizontal className="w-3 h-3 text-slate-300 opacity-60" />
-                        <span>{col.label}</span>
+                      <div className="flex items-center gap-1">
+                        <span className="truncate">{col.label}</span>
                         {col.sortable && sortField === col.id && (
-                          sortDirection === 'desc' ? (
-                            <ArrowDown className="w-3.5 h-3.5 text-[#ec3044]" />
-                          ) : (
-                            <ArrowUp className="w-3.5 h-3.5 text-[#ec3044]" />
-                          )
-                        )}
-                        {col.sortable && sortField !== col.id && (
-                          <ArrowUpDown className="w-3.5 h-3.5 text-slate-300" />
+                          sortDirection === 'desc' ? <ArrowDown className="w-3 h-3 text-[#ec3044] shrink-0" /> : <ArrowUp className="w-3 h-3 text-[#ec3044] shrink-0" />
                         )}
                       </div>
                     </th>
@@ -950,25 +866,10 @@ export default function TradeViewPage() {
               {trades.length === 0 ? (
                 <tr>
                   <td colSpan={columns.length + 1} className="py-12 text-center text-slate-400">
-                    {hasActiveFilters ? (
-                      <div>
-                        No executions match your active filters.{' '}
-                        <button onClick={resetFilters} className="font-bold text-[#ec3044] hover:underline cursor-pointer">
-                          Reset filters
-                        </button>
-                      </div>
-                    ) : (
-                      <div>
-                        No trades logged yet. Click{' '}
-                        <button 
-                          onClick={() => setIsAddTradeOpen(true)} 
-                          className="font-bold text-[#ec3044] hover:underline cursor-pointer"
-                        >
-                          + Add Trade
-                        </button>{' '}
-                        to log your first execution!
-                      </div>
-                    )}
+                    No executions recorded. Click{' '}
+                    <button onClick={() => setIsAddTradeOpen(true)} className="font-bold text-[#ec3044] hover:underline">
+                      + Add Trade
+                    </button>
                   </td>
                 </tr>
               ) : (
@@ -987,7 +888,7 @@ export default function TradeViewPage() {
                       }}
                       className={`hover:bg-[#ec3044]/5 cursor-pointer transition ${isSelected ? 'bg-[#ec3044]/10' : ''}`}
                     >
-                      <td className="py-3.5 px-4 text-center" onClick={(e) => e.stopPropagation()}>
+                      <td className="py-2.5 px-2 text-center" onClick={(e) => e.stopPropagation()}>
                         <input 
                           type="checkbox" 
                           checked={isSelected} 
@@ -999,43 +900,25 @@ export default function TradeViewPage() {
                       {columns.map((col) => {
                         switch (col.id) {
                           case 'openDate':
-                            return <td key={col.id} className="py-3.5 px-4 font-medium text-slate-600">{trade.openDate}</td>;
+                            return <td key={col.id} className="py-2.5 px-2 font-medium text-slate-600 truncate">{trade.openDate}</td>;
                           case 'symbol':
                             return (
-                              <td key={col.id} className="py-3.5 px-4 font-bold text-[#ec3044] hover:underline">
+                              <td key={col.id} className="py-2.5 px-2 font-bold text-[#ec3044] truncate hover:underline">
                                 {trade.symbol}
                               </td>
                             );
                           case 'account':
                             return (
-                              <td key={col.id} className="py-3.5 px-4 font-medium" onClick={(e) => e.stopPropagation()}>
+                              <td key={col.id} className="py-2.5 px-2 font-medium truncate" onClick={(e) => e.stopPropagation()}>
                                 {trade.accountCount > 1 ? (
-                                  <div className="flex items-center gap-1.5">
-                                    <span className="font-bold text-slate-800 flex items-center gap-1">
-                                      <Layers className="w-3.5 h-3.5 text-[#ec3044]" />
-                                      {trade.accountGroup || 'Group'}
-                                    </span>
-                                    <span className="text-[10px] bg-slate-100 text-slate-600 font-extrabold px-1.5 py-0.5 rounded-md border border-slate-200">
-                                      ×{trade.accountCount} accts
+                                  <div className="flex items-center gap-1 truncate">
+                                    <span className="font-bold text-slate-800 truncate">{trade.accountGroup || 'Group'}</span>
+                                    <span className="text-[9px] bg-slate-100 text-slate-600 font-extrabold px-1 rounded border border-slate-200 shrink-0">
+                                      ×{trade.accountCount}
                                     </span>
                                   </div>
-                                ) : editingCellTradeId === trade.id && editingCellType === 'account' ? (
-                                  <select 
-                                    autoFocus
-                                    value={trade.account || ''} 
-                                    onChange={(e) => handleInlineCellChange(trade.id!, 'account', e.target.value)}
-                                    onBlur={() => { setEditingCellTradeId(null); setEditingCellType(null); }}
-                                    className="border border-[#ec3044] bg-white rounded p-1 text-xs text-[#ec3044] font-bold"
-                                  >
-                                    <option value="__EMPTY__">-- Unassigned --</option>
-                                    {accounts.map(a => <option key={a.id || a.name} value={a.name}>{a.name} ({a.groupName})</option>)}
-                                  </select>
                                 ) : (
-                                  <span 
-                                    onClick={() => { setEditingCellTradeId(trade.id!); setEditingCellType('account'); }}
-                                    className="hover:bg-slate-100 px-2 py-1 rounded cursor-pointer transition font-semibold text-slate-800 flex items-center gap-1"
-                                  >
-                                    <Wallet className="w-3 h-3 text-[#ec3044]" />
+                                  <span className="text-slate-800 font-semibold truncate block">
                                     {trade.account || <span className="text-slate-400 italic">Unassigned</span>}
                                   </span>
                                 )}
@@ -1043,126 +926,71 @@ export default function TradeViewPage() {
                             );
                           case 'status':
                             return (
-                              <td key={col.id} className="py-3.5 px-4">
+                              <td key={col.id} className="py-2.5 px-2 truncate">
                                 {trade.magnifiedPnL > 0 ? (
-                                  <span className="px-2.5 py-1 bg-emerald-50 text-emerald-600 border border-emerald-200 rounded text-[10px] font-bold">WIN</span>
+                                  <span className="px-1.5 py-0.2 bg-emerald-50 text-emerald-600 border border-emerald-200 rounded text-[9px] font-bold">WIN</span>
                                 ) : trade.magnifiedPnL < 0 ? (
-                                  <span className="px-2.5 py-1 bg-rose-50 text-rose-500 border border-rose-200 rounded text-[10px] font-bold">LOSS</span>
+                                  <span className="px-1.5 py-0.2 bg-rose-50 text-rose-500 border border-rose-200 rounded text-[9px] font-bold">LOSS</span>
                                 ) : (
-                                  <span className="px-2.5 py-1 bg-slate-50 text-slate-500 border border-slate-200 rounded text-[10px] font-bold">BE</span>
+                                  <span className="px-1.5 py-0.2 bg-slate-50 text-slate-500 border border-slate-200 rounded text-[9px] font-bold">BE</span>
                                 )}
                               </td>
                             );
                           case 'side':
-                            return <td key={col.id} className="py-3.5 px-4 font-semibold text-slate-500">{trade.side || 'LONG'}</td>;
+                            return <td key={col.id} className="py-2.5 px-2 font-semibold text-slate-500 truncate">{trade.side || 'LONG'}</td>;
                           case 'contractsTraded':
-                            return (
-                              <td key={col.id} className="py-3.5 px-4 font-mono font-semibold text-slate-700">
-                                {trade.contractsTraded || 1}
-                              </td>
-                            );
+                            return <td key={col.id} className="py-2.5 px-2 font-mono font-semibold text-slate-700 truncate">{trade.contractsTraded || 1}</td>;
+                          case 'entryPrice':
+                            return <td key={col.id} className="py-2.5 px-2 font-mono text-slate-700 truncate">${Number(trade.entryPrice).toFixed(2)}</td>;
+                          case 'exitPrice':
+                            return <td key={col.id} className="py-2.5 px-2 font-mono text-slate-700 truncate">${Number(trade.exitPrice).toFixed(2)}</td>;
                           case 'commissions':
                             return (
-                              <td key={col.id} className="py-3.5 px-4 font-mono text-slate-500 font-semibold">
+                              <td key={col.id} className="py-2.5 px-2 font-mono text-slate-400 font-semibold truncate">
                                 ${(Number(trade.commissions || 0) * (trade.accountCount || 1)).toFixed(2)}
                               </td>
                             );
-                          case 'entryPrice':
-                            return <td key={col.id} className="py-3.5 px-4 font-mono font-semibold">${Number(trade.entryPrice).toFixed(2)}</td>;
-                          case 'exitPrice':
-                            return <td key={col.id} className="py-3.5 px-4 font-mono font-semibold">${Number(trade.exitPrice).toFixed(2)}</td>;
                           case 'netPnL':
                             return (
-                              <td key={col.id} className="py-3.5 px-4 font-mono">
-                                <div className={`font-black text-sm ${trade.magnifiedPnL >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                              <td key={col.id} className="py-2.5 px-2 font-mono truncate">
+                                <div className={`font-black ${trade.magnifiedPnL >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
                                   {trade.magnifiedPnL >= 0 ? '+' : '-'}${Math.abs(Number(trade.magnifiedPnL)).toFixed(2)}
                                 </div>
                                 {trade.accountCount > 1 && (
-                                  <div className="text-[10px] text-slate-400 font-semibold mt-0.5">
-                                    ${Number(trade.individualPnL).toFixed(2)} / acct
+                                  <div className="text-[9px] text-slate-400 font-semibold truncate">
+                                    ${Number(trade.individualPnL).toFixed(2)}/acct
                                   </div>
                                 )}
                               </td>
                             );
                           case 'setupTag':
                             return (
-                              <td key={col.id} className="py-3.5 px-4 font-medium text-slate-600" onClick={(e) => e.stopPropagation()}>
-                                {editingCellTradeId === trade.id && editingCellType === 'setup' ? (
-                                  <select 
-                                    autoFocus
-                                    value={trade.setupTag || ''} 
-                                    onChange={(e) => handleInlineCellChange(trade.id!, 'setupTag', e.target.value)}
-                                    onBlur={() => { setEditingCellTradeId(null); setEditingCellType(null); }}
-                                    className="border border-[#ec3044] bg-white rounded p-1 text-xs text-[#ec3044] font-bold"
-                                  >
-                                    <option value="__EMPTY__">-- (Unspecified)</option>
-                                    {savedSetups.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-                                    <option value="__NEW__" className="text-[#ec3044] font-bold">+ Add New Setup Tag...</option>
-                                  </select>
-                                ) : (
-                                  <span 
-                                    onClick={() => { setEditingCellTradeId(trade.id!); setEditingCellType('setup'); }}
-                                    className="hover:bg-slate-100 px-2 py-1 rounded cursor-pointer transition font-semibold"
-                                  >
-                                    {trade.setupTag || '--'}
-                                  </span>
-                                )}
+                              <td key={col.id} className="py-2.5 px-2 text-slate-600 truncate" onClick={(e) => e.stopPropagation()}>
+                                <span onClick={() => { setEditingCellTradeId(trade.id!); setEditingCellType('setup'); }} className="truncate block hover:underline">
+                                  {trade.setupTag || '--'}
+                                </span>
                               </td>
                             );
                           case 'strategy':
                             return (
-                              <td key={col.id} className="py-3.5 px-4 font-medium" onClick={(e) => e.stopPropagation()}>
-                                {editingCellTradeId === trade.id && editingCellType === 'strategy' ? (
-                                  <select 
-                                    autoFocus
-                                    value={trade.strategy || ''} 
-                                    onChange={(e) => handleInlineCellChange(trade.id!, 'strategy', e.target.value)}
-                                    onBlur={() => { setEditingCellTradeId(null); setEditingCellType(null); }}
-                                    className="border border-[#ec3044] bg-white rounded p-1 text-xs text-[#ec3044] font-bold"
-                                  >
-                                    <option value="__EMPTY__">-- (Unspecified)</option>
-                                    {savedStrategies.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-                                    <option value="__NEW__" className="text-[#ec3044] font-bold">+ Add New Strategy...</option>
-                                  </select>
-                                ) : (
-                                  <span 
-                                    onClick={() => { setEditingCellTradeId(trade.id!); setEditingCellType('strategy'); }}
-                                    className="hover:bg-slate-100 px-2 py-1 rounded cursor-pointer transition font-semibold text-[#ec3044]"
-                                  >
-                                    {trade.strategy || '--'}
-                                  </span>
-                                )}
+                              <td key={col.id} className="py-2.5 px-2 text-[#ec3044] font-semibold truncate" onClick={(e) => e.stopPropagation()}>
+                                <span onClick={() => { setEditingCellTradeId(trade.id!); setEditingCellType('strategy'); }} className="truncate block hover:underline">
+                                  {trade.strategy || '--'}
+                                </span>
                               </td>
                             );
                           case 'mistakeTag':
                             return (
-                              <td key={col.id} className="py-3.5 px-4 font-medium" onClick={(e) => e.stopPropagation()}>
-                                {editingCellTradeId === trade.id && editingCellType === 'mistake' ? (
-                                  <select 
-                                    autoFocus
-                                    value={trade.mistakeTag || ''} 
-                                    onChange={(e) => handleInlineCellChange(trade.id!, 'mistakeTag', e.target.value)}
-                                    onBlur={() => { setEditingCellTradeId(null); setEditingCellType(null); }}
-                                    className="border border-[#ec3044] bg-white rounded p-1 text-xs text-[#ec3044] font-bold"
-                                  >
-                                    <option value="__EMPTY__">-- (Unspecified)</option>
-                                    {savedMistakes.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
-                                    <option value="__NEW__" className="text-[#ec3044] font-bold">+ Add New Mistake Tag...</option>
-                                  </select>
-                                ) : (
-                                  <span 
-                                    onClick={() => { setEditingCellTradeId(trade.id!); setEditingCellType('mistake'); }}
-                                    className="hover:bg-slate-100 px-2 py-1 rounded cursor-pointer transition font-semibold text-amber-600"
-                                  >
-                                    {trade.mistakeTag || '--'}
-                                  </span>
-                                )}
+                              <td key={col.id} className="py-2.5 px-2 text-amber-600 font-semibold truncate" onClick={(e) => e.stopPropagation()}>
+                                <span onClick={() => { setEditingCellTradeId(trade.id!); setEditingCellType('mistake'); }} className="truncate block hover:underline">
+                                  {trade.mistakeTag || '--'}
+                                </span>
                               </td>
                             );
                           case 'closeTime':
-                            return <td key={col.id} className="py-3.5 px-4 text-slate-500">{trade.exitTime || '--'}</td>;
+                            return <td key={col.id} className="py-2.5 px-2 text-slate-400 truncate">{trade.exitTime || '--'}</td>;
                           default:
-                            return <td key={col.id} className="py-3.5 px-4">--</td>;
+                            return <td key={col.id} className="py-2.5 px-2 truncate">--</td>;
                         }
                       })}
                     </tr>
@@ -1173,163 +1001,6 @@ export default function TradeViewPage() {
           </table>
         </div>
       </div>
-
-      {/* RIGHT-CLICK CONTEXT MENU MODAL */}
-      {contextMenu && (
-        <div 
-          onClick={(e) => e.stopPropagation()}
-          style={{ top: `${Math.min(contextMenu.y, window.innerHeight - 250)}px`, left: `${Math.min(contextMenu.x, window.innerWidth - 220)}px` }}
-          className="absolute bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 w-52 p-1.5 text-xs font-semibold text-slate-700 space-y-1"
-        >
-          <div className="px-3 py-1.5 border-b border-slate-100 font-bold text-slate-400 text-[10px] uppercase">
-            Quick Actions
-          </div>
-
-          <button 
-            onClick={() => { router.push(`/trade-view/${contextMenu.tradeId}`); setContextMenu(null); }}
-            className="flex items-center gap-2.5 w-full p-2 hover:bg-slate-50 rounded-lg text-left cursor-pointer text-slate-800"
-          >
-            <ExternalLink className="w-3.5 h-3.5 text-slate-400" /> View Full Trade
-          </button>
-
-          <button 
-            onClick={() => setContextSubAction(contextSubAction === 'account' ? null : 'account')}
-            className="flex items-center gap-2.5 w-full p-2 hover:bg-slate-50 rounded-lg text-left cursor-pointer text-[#ec3044]"
-          >
-            <Wallet className="w-3.5 h-3.5" /> Assign Account
-          </button>
-          {contextSubAction === 'account' && (
-            <div className="pl-4 pr-1 py-1 space-y-1 bg-slate-50 rounded-lg">
-              {accounts.map(a => (
-                <div 
-                  key={a.id || a.name} 
-                  onClick={async () => { 
-                    const match = trades.find(t => t.id === contextMenu.tradeId);
-                    const idsToUpdate = match?.allIds || [contextMenu.tradeId];
-                    const { supabase } = await import('@/lib/supabase');
-                    for (const targetId of idsToUpdate) {
-                      await supabase.from('trades').update({ account: a.name, account_group: a.groupName }).eq('id', targetId);
-                      await db.trades.update(targetId, { account: a.name, accountGroup: a.groupName });
-                    }
-                    setContextMenu(null);
-                    fetchCloudData();
-                  }}
-                  className="p-1.5 hover:bg-slate-200/60 rounded cursor-pointer font-bold text-slate-700 truncate"
-                >
-                  {a.name} ({a.groupName})
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="border-t border-slate-100 my-1" />
-
-          <button 
-            onClick={async () => {
-              if (confirm('Are you sure you want to delete this execution across all copied accounts?')) {
-                const match = trades.find(t => t.id === contextMenu.tradeId);
-                const idsToDelete = match?.allIds || [contextMenu.tradeId];
-                const { supabase } = await import('@/lib/supabase');
-                for (const targetId of idsToDelete) {
-                  await supabase.from('trades').delete().eq('id', targetId);
-                  await deleteLeaderTradeCopies(targetId);
-                  await db.trades.delete(targetId);
-                }
-                setContextMenu(null);
-                fetchCloudData();
-              }
-            }}
-            className="flex items-center gap-2.5 w-full p-2 hover:bg-rose-50 text-rose-600 rounded-lg text-left font-bold cursor-pointer"
-          >
-            <Trash2 className="w-3.5 h-3.5" /> Delete Across All Accounts
-          </button>
-        </div>
-      )}
-
-      {/* Mass Tag Modal */}
-      {tagModalType && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-sm p-5 shadow-xl">
-            <h3 className="text-sm font-bold text-slate-900 mb-2 capitalize">
-              Apply {tagModalType} to {selectedTrades.length} selected execution(s)
-            </h3>
-            <input 
-              type="text" 
-              value={tagInputVal} 
-              onChange={e => setTagInputVal(e.target.value)} 
-              placeholder={`Enter ${tagModalType} value...`} 
-              className="w-full border border-[#ec3044]/40 rounded-lg p-2.5 text-xs text-[#ec3044] font-semibold mb-4 focus:outline-none focus:ring-2 focus:ring-[#ec3044]"
-            />
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setTagModalType(null)} className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-semibold cursor-pointer">
-                Cancel
-              </button>
-              <button 
-                onClick={handleApplyMassTag} 
-                className="px-4 py-1.5 bg-[#ec3044] hover:bg-[#d4283b] text-white rounded-lg text-xs font-bold shadow-md cursor-pointer"
-              >
-                Apply
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Tag Creation Modal */}
-      {activeNewModalType && (
-        <div 
-          onClick={() => { setActiveNewModalType(null); setNewModalInputVal(''); setTargetTradeIdForNewTag(null); }}
-          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-        >
-          <div 
-            onClick={e => e.stopPropagation()}
-            className="bg-white border border-slate-200 rounded-2xl w-full max-w-sm p-5 shadow-2xl"
-          >
-            <div className="flex justify-between items-center mb-3 pb-2 border-b border-slate-100">
-              <h3 className="text-sm font-bold text-slate-900 capitalize">
-                Create New {activeNewModalType} Tag
-              </h3>
-              <button 
-                onClick={() => { setActiveNewModalType(null); setNewModalInputVal(''); setTargetTradeIdForNewTag(null); }} 
-                className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateNewTagPopup} className="space-y-4">
-              <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1 capitalize">{activeNewModalType} Name</label>
-                <input 
-                  type="text" 
-                  autoFocus
-                  value={newModalInputVal} 
-                  onChange={e => setNewModalInputVal(e.target.value)} 
-                  placeholder={`Enter ${activeNewModalType} tag name...`} 
-                  className="w-full border border-[#ec3044]/40 bg-[#ec3044]/5 rounded-xl p-2.5 text-xs text-[#ec3044] font-bold focus:outline-none focus:ring-2 focus:ring-[#ec3044]"
-                  required
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-                <button 
-                  type="button" 
-                  onClick={() => { setActiveNewModalType(null); setNewModalInputVal(''); setTargetTradeIdForNewTag(null); }} 
-                  className="px-3.5 py-1.5 bg-slate-100 text-slate-600 rounded-xl text-xs font-semibold cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button 
-                  type="submit" 
-                  className="px-4 py-1.5 bg-[#ec3044] hover:bg-[#d4283b] text-white rounded-xl text-xs font-bold shadow-md cursor-pointer"
-                >
-                  Create & Select
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
       {/* Global Add Trade Modal */}
       <AddTradeModal isOpen={isAddTradeOpen} onClose={() => { setIsAddTradeOpen(false); fetchCloudData(); }} />

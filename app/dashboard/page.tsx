@@ -33,7 +33,6 @@ interface AccountAdjustment {
 export default function DashboardPage() {
   const router = useRouter();
 
-  // Active Sidebar Account / Group Filter Selection State
   const [activeFilterSelection, setActiveFilterSelection] = useState<{ 
     type: 'global' | 'group' | 'account'; 
     name: string 
@@ -45,7 +44,6 @@ export default function DashboardPage() {
   const [mistakeTagsList, setMistakeTagsList] = useState<any[]>([]);
   const [adjustments, setAdjustments] = useState<AccountAdjustment[]>([]);
 
-  // Target and Drawdown custom inputs (persisted per account/group)
   const [targetInput, setTargetInput] = useState<string>('');
   const [drawdownInput, setDrawdownInput] = useState<string>('');
 
@@ -60,7 +58,6 @@ export default function DashboardPage() {
     setStrategies(strats);
     setMistakeTagsList(mistakesList);
 
-    // Load Adjustments from Supabase & Dexie
     let loadedAdjustments: AccountAdjustment[] = [];
     try {
       const { supabase } = await import('@/lib/supabase');
@@ -69,7 +66,7 @@ export default function DashboardPage() {
         loadedAdjustments = data.map(d => ({
           id: d.id,
           accountId: d.account_id,
-          type: d.type,
+          type: d.type === 'deposit' ? 'deposit' : 'withdrawal',
           amount: Number(d.amount),
           date: d.date,
           note: d.note
@@ -93,7 +90,6 @@ export default function DashboardPage() {
     loadData();
   }, []);
 
-  // Sync inputs from localStorage when active account changes
   useEffect(() => {
     const storageKey = `tryhard_thresholds_${activeFilterSelection.name}`;
     const saved = localStorage.getItem(storageKey);
@@ -121,7 +117,6 @@ export default function DashboardPage() {
     localStorage.setItem(storageKey, JSON.stringify({ target: targetInput, drawdown: val }));
   };
 
-  // Listen to sidebar account filter changes
   useEffect(() => {
     const handleAccountFilterChanged = (e: any) => {
       const detail = e.detail;
@@ -142,8 +137,8 @@ export default function DashboardPage() {
     return () => window.removeEventListener('account-filter-changed', handleAccountFilterChanged);
   }, []);
 
-  // Filter trades based on active sidebar account/group selection
-  const trades = rawTrades.filter((trade) => {
+  // Filter scoped trades
+  const scopedTrades = rawTrades.filter((trade) => {
     if (activeFilterSelection.type === 'account') {
       if (trade.account !== activeFilterSelection.name) return false;
     } else if (activeFilterSelection.type === 'group') {
@@ -155,9 +150,57 @@ export default function DashboardPage() {
     return true;
   });
 
-  // Strict Filter: Filter out orphan adjustments from accounts that no longer exist
-  const validAccountIds = new Set(accounts.map(a => String(a.id)));
+  const isIndividualAccountView = activeFilterSelection.type === 'account';
 
+  // Cluster trades to eliminate multiple counts for cloned trades
+  const clusteredTrades = React.useMemo(() => {
+    if (isIndividualAccountView) {
+      return scopedTrades.map(t => ({
+        ...t,
+        magnifiedPnL: t.netPnL || 0,
+        individualPnL: t.netPnL || 0,
+        accountCount: 1,
+      }));
+    }
+
+    const clusters: Record<string, {
+      baseTrade: any;
+      uniqueAccounts: Set<string>;
+    }> = {};
+
+    scopedTrades.forEach(trade => {
+      const clusterKey = trade.leaderTradeId || trade.leader_trade_id 
+        ? `leader_${trade.leaderTradeId || trade.leader_trade_id}`
+        : (trade.openDate && trade.entryTime && trade.symbol)
+        ? `exec_${trade.openDate}_${trade.entryTime}_${trade.symbol}_${trade.side}`
+        : `trade_${trade.id}`;
+
+      if (!clusters[clusterKey]) {
+        clusters[clusterKey] = {
+          baseTrade: trade,
+          uniqueAccounts: new Set()
+        };
+      }
+
+      if (trade.account) clusters[clusterKey].uniqueAccounts.add(trade.account);
+    });
+
+    return Object.values(clusters).map(({ baseTrade, uniqueAccounts }) => {
+      const count = uniqueAccounts.size > 0 ? uniqueAccounts.size : 1;
+      const individualPnL = Number(baseTrade.netPnL) || 0;
+      const magnifiedPnL = individualPnL * count;
+
+      return {
+        ...baseTrade,
+        magnifiedPnL,
+        individualPnL,
+        accountCount: count,
+      };
+    });
+  }, [scopedTrades, isIndividualAccountView]);
+
+  // Adjustments filter
+  const validAccountIds = new Set(accounts.map(a => String(a.id)));
   const filteredAdjustments = adjustments
     .filter(adj => validAccountIds.has(String(adj.accountId)))
     .filter(adj => {
@@ -177,13 +220,15 @@ export default function DashboardPage() {
   const [hoveredPointIndex, setHoveredPointIndex] = useState<number | null>(null);
   const accountName = activeFilterSelection.name;
 
-  const grossTradePnL = trades.reduce((acc, t) => acc + (t.netPnL || 0), 0);
-  const winTrades = trades.filter(t => (t.netPnL || 0) > 0);
-  const lossTrades = trades.filter(t => (t.netPnL || 0) < 0);
-  const winRate = trades.length > 0 ? ((winTrades.length / trades.length) * 100).toFixed(1) : '0';
+  // KPI calculations based on consolidated executions
+  const grossTradePnL = clusteredTrades.reduce((acc, t) => acc + (t.magnifiedPnL || 0), 0);
+  const winTrades = clusteredTrades.filter(t => (t.magnifiedPnL || 0) > 0);
+  const lossTrades = clusteredTrades.filter(t => (t.magnifiedPnL || 0) < 0);
+  const totalTradesCount = clusteredTrades.length;
+  const winRate = totalTradesCount > 0 ? ((winTrades.length / totalTradesCount) * 100).toFixed(1) : '0';
 
-  const grossWins = winTrades.reduce((acc, t) => acc + t.netPnL, 0);
-  const grossLosses = Math.abs(lossTrades.reduce((acc, t) => acc + t.netPnL, 0));
+  const grossWins = winTrades.reduce((acc, t) => acc + t.magnifiedPnL, 0);
+  const grossLosses = Math.abs(lossTrades.reduce((acc, t) => acc + t.magnifiedPnL, 0));
   const profitFactor = grossLosses > 0 ? (grossWins / grossLosses).toFixed(2) : grossWins > 0 ? '99.00' : '0.00';
 
   const totalWithdrawals = filteredAdjustments
@@ -226,15 +271,16 @@ export default function DashboardPage() {
   const distanceToTarget = targetPnL !== null ? targetPnL - netPnLAfterWithdrawals : null;
   const distanceToDrawdown = drawdownPnL !== null ? netPnLAfterWithdrawals - drawdownPnL : null;
 
+  // Mistake Impact
   const mistakeMap: Record<string, { count: number; totalCost: number }> = {};
-  trades.forEach(t => {
+  clusteredTrades.forEach(t => {
     if (t.mistakeTag) {
       if (!mistakeMap[t.mistakeTag]) {
         mistakeMap[t.mistakeTag] = { count: 0, totalCost: 0 };
       }
       mistakeMap[t.mistakeTag].count += 1;
-      if ((t.netPnL || 0) < 0) {
-        mistakeMap[t.mistakeTag].totalCost += Math.abs(t.netPnL);
+      if ((t.magnifiedPnL || 0) < 0) {
+        mistakeMap[t.mistakeTag].totalCost += Math.abs(t.magnifiedPnL);
       }
     }
   });
@@ -243,26 +289,14 @@ export default function DashboardPage() {
     .sort((a, b) => b[1].totalCost - a[1].totalCost)
     .slice(0, 4);
 
-  const strategyMap: Record<string, { count: number; pnl: number }> = {};
-  trades.forEach(t => {
-    if (t.strategy) {
-      if (!strategyMap[t.strategy]) strategyMap[t.strategy] = { count: 0, pnl: 0 };
-      strategyMap[t.strategy].count += 1;
-      strategyMap[t.strategy].pnl += (t.netPnL || 0);
-    }
-  });
-
-  const reportTrades = [...trades]
-    .sort((a, b) => new Date(`${b.openDate} ${b.entryTime || '00:00'}`).getTime() - new Date(`${a.openDate} ${a.entryTime || '00:00'}`).getTime())
-    .slice(0, 5);
-
+  // CME Session Edge
   const sessionMap: Record<string, { count: number; pnl: number }> = {
     'RTH AM': { count: 0, pnl: 0 },
     'RTH PM': { count: 0, pnl: 0 },
     'Globex': { count: 0, pnl: 0 }
   };
 
-  trades.forEach(t => {
+  clusteredTrades.forEach(t => {
     const timeStr = (t.entryTime || t.entry_time || '08:30').toString().replace(/\u202f/g, ' ').trim();
     let timeDecimal = 8.5;
 
@@ -283,21 +317,24 @@ export default function DashboardPage() {
 
     if (timeDecimal >= 8.5 && timeDecimal < 12.0) {
       sessionMap['RTH AM'].count += 1;
-      sessionMap['RTH AM'].pnl += (t.netPnL || 0);
+      sessionMap['RTH AM'].pnl += (t.magnifiedPnL || 0);
     } else if (timeDecimal >= 12.0 && timeDecimal <= 15.0) {
       sessionMap['RTH PM'].count += 1;
-      sessionMap['RTH PM'].pnl += (t.netPnL || 0);
+      sessionMap['RTH PM'].pnl += (t.magnifiedPnL || 0);
     } else {
       sessionMap['Globex'].count += 1;
-      sessionMap['Globex'].pnl += (t.netPnL || 0);
+      sessionMap['Globex'].pnl += (t.magnifiedPnL || 0);
     }
   });
 
+  // Consolidated Events for True Chronological Equity Curve
   const combinedEvents = [
-    ...trades.map(t => ({
+    ...clusteredTrades.map(t => ({
       date: t.openDate,
       time: t.entryTime || '00:00',
-      pnlDelta: t.netPnL || 0,
+      pnlDelta: t.magnifiedPnL || 0,
+      individualPnL: t.individualPnL || 0,
+      accountCount: t.accountCount || 1,
       symbol: t.symbol,
       type: 'trade'
     })),
@@ -305,6 +342,8 @@ export default function DashboardPage() {
       date: a.date,
       time: '23:59',
       pnlDelta: a.type === 'deposit' ? a.amount : -a.amount,
+      individualPnL: a.type === 'deposit' ? a.amount : -a.amount,
+      accountCount: 1,
       symbol: a.type === 'deposit' ? 'Deposit (+)' : 'Withdrawal (-)',
       type: 'adjustment'
     }))
@@ -318,11 +357,13 @@ export default function DashboardPage() {
       date: e.date, 
       symbol: e.symbol, 
       tradePnL: e.pnlDelta,
+      individualPnL: e.individualPnL,
+      accountCount: e.accountCount,
       isAdjustment: e.type === 'adjustment'
     };
   });
 
-  const equityData = [{ pnl: 0, date: 'Start', symbol: 'Baseline', tradePnL: 0, isAdjustment: false }, ...cumulativePoints];
+  const equityData = [{ pnl: 0, date: 'Start', symbol: 'Baseline', tradePnL: 0, individualPnL: 0, accountCount: 1, isAdjustment: false }, ...cumulativePoints];
 
   const allValues = equityData.map(d => d.pnl);
   if (targetPnL !== null) allValues.push(targetPnL);
@@ -377,10 +418,6 @@ export default function DashboardPage() {
     setHoveredPointIndex(nearestIndex);
   };
 
-  const handleDownloadReport = () => {
-    window.print();
-  };
-
   return (
     <div className="p-8 bg-[#F8F9FD] min-h-screen text-slate-800 font-sans space-y-8 w-full max-w-[1700px] mx-auto">
 
@@ -393,13 +430,13 @@ export default function DashboardPage() {
               Scoped to {activeFilterSelection.type === 'group' ? 'Group:' : 'Account:'} {activeFilterSelection.name}
             </p>
           ) : (
-            <p className="text-xs text-slate-500 mt-0.5">Real-time performance analytics, behavioral evaluation, and certified broker reporting.</p>
+            <p className="text-xs text-slate-500 mt-0.5">Unified performance metrics, behavioral analysis, and verified execution tracking.</p>
           )}
         </div>
 
         <div className="flex items-center gap-3">
           <button 
-            onClick={handleDownloadReport}
+            onClick={() => window.print()}
             className="flex items-center gap-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold px-4 py-2 rounded-xl text-sm shadow-sm transition cursor-pointer"
           >
             <Download className="w-4 h-4 text-[#ec3044]" /> Download Certified Report
@@ -460,23 +497,21 @@ export default function DashboardPage() {
 
         <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-sm flex flex-col justify-between h-32">
           <div className="text-sm font-semibold text-slate-500 flex items-center justify-between">
-            <span>Total Trades</span>
+            <span>Total Executions</span>
             <Activity className="w-4 h-4 text-slate-400" />
           </div>
-          <div className="text-3xl font-bold text-slate-900">{trades.length}</div>
+          <div className="text-3xl font-bold text-slate-900">{totalTradesCount}</div>
         </div>
       </div>
 
-      {/* EQUITY CURVE WITH TARGET, DRAWDOWN & DISTANCE METRICS */}
+      {/* True Stepped Equity Curve */}
       <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm p-6 space-y-4 w-full print:hidden">
-        
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-3">
           <div>
             <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Equity Curve Performance</h2>
-            <p className="text-[11px] text-slate-400">Set target and drawdown floors to display boundary levels and live remaining distance</p>
+            <p className="text-[11px] text-slate-400">Plots chronological execution milestones across all active accounts without artificial smoothing.</p>
           </div>
 
-          {/* Interactive Target & Min Floor Input Controls */}
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1.5 bg-emerald-50/60 border border-emerald-200/80 px-2.5 py-1 rounded-xl">
               <Flag className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
@@ -503,7 +538,6 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Dynamic Distance Badges & ATH/ATL */}
           <div className="flex flex-wrap items-center gap-3 text-xs font-mono">
             {distanceToTarget !== null && (
               <div className={`flex items-center gap-1 px-2.5 py-1 rounded-xl font-bold border ${
@@ -552,13 +586,14 @@ export default function DashboardPage() {
                 Balance: ${activeHoverData?.pnl.toFixed(2)}
               </div>
               <div className="text-[10px] text-slate-400">
-                {activeHoverData?.date} {activeHoverData?.symbol !== 'Baseline' ? `• ${activeHoverData?.symbol} (${activeHoverData?.tradePnL >= 0 ? '+' : ''}${(activeHoverData?.tradePnL || 0).toFixed(2)})` : ''}
+                {activeHoverData?.date} {activeHoverData?.symbol !== 'Baseline' ? (
+                  `• ${activeHoverData?.symbol} (${activeHoverData?.tradePnL >= 0 ? '+' : ''}${(activeHoverData?.tradePnL || 0).toFixed(2)}${activeHoverData?.accountCount > 1 ? ` across ${activeHoverData.accountCount} accts` : ''})`
+                ) : ''}
               </div>
             </div>
           </div>
         </div>
 
-        {/* SVG Viewport */}
         <div className="w-full h-96 relative">
           {pointsCoordinates.length < 2 ? (
             <div className="h-full flex items-center justify-center text-slate-400 text-xs font-medium">
@@ -592,57 +627,22 @@ export default function DashboardPage() {
                 </clipPath>
               </defs>
 
-              {/* Baseline zero line */}
               <line x1={0} y1={baselineY} x2={svgWidth} y2={baselineY} stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="6 4" />
 
-              {/* Target Line */}
               {targetY !== null && (
                 <g>
-                  <line 
-                    x1={0} 
-                    y1={targetY} 
-                    x2={svgWidth} 
-                    y2={targetY} 
-                    stroke="#10b981" 
-                    strokeWidth="2" 
-                    strokeDasharray="5 3" 
-                  />
-                  <text 
-                    x={svgWidth - 10} 
-                    y={targetY - 6} 
-                    textAnchor="end" 
-                    fill="#059669" 
-                    fontSize="11" 
-                    fontFamily="monospace"
-                    fontWeight="bold"
-                  >
-                    TARGET GOAL: +${targetPnL?.toLocaleString()}
+                  <line x1={0} y1={targetY} x2={svgWidth} y2={targetY} stroke="#10b981" strokeWidth="2" strokeDasharray="5 3" />
+                  <text x={svgWidth - 10} y={targetY - 6} textAnchor="end" fill="#059669" fontSize="11" fontFamily="monospace" fontWeight="bold">
+                    TARGET: +${targetPnL?.toLocaleString()}
                   </text>
                 </g>
               )}
 
-              {/* Drawdown Floor Line */}
               {drawdownY !== null && (
                 <g>
-                  <line 
-                    x1={0} 
-                    y1={drawdownY} 
-                    x2={svgWidth} 
-                    y2={drawdownY} 
-                    stroke="#e11d48" 
-                    strokeWidth="2" 
-                    strokeDasharray="5 3" 
-                  />
-                  <text 
-                    x={svgWidth - 10} 
-                    y={drawdownY + 14} 
-                    textAnchor="end" 
-                    fill="#e11d48" 
-                    fontSize="11" 
-                    fontFamily="monospace"
-                    fontWeight="bold"
-                  >
-                    MIN FLOOR / DRAWDOWN: -${Math.abs(drawdownPnL || 0).toLocaleString()}
+                  <line x1={0} y1={drawdownY} x2={svgWidth} y2={drawdownY} stroke="#e11d48" strokeWidth="2" strokeDasharray="5 3" />
+                  <text x={svgWidth - 10} y={drawdownY + 14} textAnchor="end" fill="#e11d48" fontSize="11" fontFamily="monospace" fontWeight="bold">
+                    MIN FLOOR: -${Math.abs(drawdownPnL || 0).toLocaleString()}
                   </text>
                 </g>
               )}
@@ -699,7 +699,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* DASHBOARD MODULES */}
+      {/* Analytics Modules */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 print:hidden">
         <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm p-6 space-y-4">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -739,119 +739,6 @@ export default function DashboardPage() {
               </div>
             ))}
           </div>
-        </div>
-      </div>
-
-      {/* Printable Report Summary */}
-      <style jsx global>{`
-        @media print {
-          body { background: white !important; }
-          aside, nav, header, button { display: none !important; }
-          .print\\:block { display: block !important; }
-          @page { size: letter portrait; margin: 0.5in; }
-        }
-      `}</style>
-
-      <div className="hidden print:block bg-white text-slate-900 p-2 space-y-4 w-full text-xs">
-        <div className="flex justify-between items-start border-b border-slate-200 pb-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 bg-[#ec3044] rounded-lg flex items-center justify-center text-white font-bold text-xs">🎯</div>
-              <h2 className="text-lg font-black text-slate-900 tracking-tight">TryhardTrades Verified Audit Statement</h2>
-            </div>
-            <p className="text-[10px] text-slate-500 mt-0.5 font-semibold">Account Scope: <span className="text-slate-900">{accountName}</span></p>
-          </div>
-          <div className="text-right">
-            <p className="text-[10px] text-slate-400">Generated on {new Date().toLocaleDateString()}</p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-4 gap-3">
-          <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5">
-            <span className="text-[9px] font-bold text-slate-400 uppercase">Gross P&L</span>
-            <div className={`text-lg font-black ${grossTradePnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-              {grossTradePnL >= 0 ? `$${grossTradePnL.toFixed(2)}` : `-$${Math.abs(grossTradePnL).toFixed(2)}`}
-            </div>
-          </div>
-          <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5">
-            <span className="text-[9px] font-bold text-slate-400 uppercase">Win Rate</span>
-            <div className="text-lg font-black text-slate-900">{winRate}%</div>
-          </div>
-          <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5">
-            <span className="text-[9px] font-bold text-slate-400 uppercase">Profit Factor</span>
-            <div className="text-lg font-black text-slate-900">{profitFactor}</div>
-          </div>
-          <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5">
-            <span className="text-[9px] font-bold text-slate-400 uppercase">Executions</span>
-            <div className="text-lg font-black text-slate-900">{trades.length}</div>
-          </div>
-        </div>
-
-        <div className="space-y-1.5">
-          <h3 className="text-[10px] font-bold text-slate-900 uppercase tracking-wider">Strategy Performance Breakdown</h3>
-          <div className="border border-slate-200 rounded-lg overflow-hidden">
-            <table className="w-full text-left text-[11px]">
-              <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
-                <tr>
-                  <th className="py-1.5 px-2.5">Strategy</th>
-                  <th className="py-1.5 px-2.5">Trades</th>
-                  <th className="py-1.5 px-2.5 text-right">P&L</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-slate-700">
-                {Object.entries(strategyMap).length === 0 ? (
-                  <tr><td colSpan={3} className="py-2 text-center text-slate-400">No active strategy records</td></tr>
-                ) : (
-                  Object.entries(strategyMap).map(([strat, data]) => (
-                    <tr key={strat}>
-                      <td className="py-1.5 px-2.5 font-bold text-slate-900">{strat}</td>
-                      <td className="py-1.5 px-2.5 text-slate-500">{data.count}</td>
-                      <td className={`py-1.5 px-2.5 font-mono font-bold text-right ${data.pnl >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>${data.pnl.toFixed(2)}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="space-y-1.5">
-          <h3 className="text-[10px] font-bold text-slate-900 uppercase tracking-wider">Executed Trades Summary ({reportTrades.length} Recent)</h3>
-          <div className="border border-slate-200 rounded-lg overflow-hidden">
-            <table className="w-full text-left text-[11px]">
-              <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
-                <tr>
-                  <th className="py-2 px-2.5">Date</th>
-                  <th className="py-2 px-2.5">Symbol</th>
-                  <th className="py-2 px-2.5">Side</th>
-                  <th className="py-2 px-2.5">Strategy</th>
-                  <th className="py-2 px-2.5">Outcome</th>
-                  <th className="py-2 px-2.5 text-right">Net P&L</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-slate-700">
-                {reportTrades.length === 0 ? (
-                  <tr><td colSpan={6} className="py-3 text-center text-slate-400">No trades recorded yet.</td></tr>
-                ) : (
-                  reportTrades.map((t) => (
-                    <tr key={t.id}>
-                      <td className="py-2 px-2.5">{t.openDate}</td>
-                      <td className="py-2 px-2.5 font-bold text-slate-900">{t.symbol}</td>
-                      <td className="py-2 px-2.5 text-slate-500">{t.side || 'LONG'}</td>
-                      <td className="py-2 px-2.5 text-slate-700">{t.strategy || '--'}</td>
-                      <td className="py-2 px-2.5 font-bold">{t.status}</td>
-                      <td className={`py-2 px-2.5 font-mono font-bold text-right ${t.netPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>${Number(t.netPnL).toFixed(2)}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="pt-3 border-t border-slate-200 flex justify-between items-center text-[9px] text-slate-400">
-          <span>TryhardTradesJournal Professional Audit System</span>
-          <span>Page 1 of 1</span>
         </div>
       </div>
 
