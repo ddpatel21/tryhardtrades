@@ -227,13 +227,11 @@ export default function TradeViewPage() {
     return true;
   });
 
-  // 2. Magnification & Clustering Logic
-  // When viewing "All Accounts" or "Group: X", consolidate copied trades into 1 row
+  // Magnification & Clustering Logic
   const isIndividualAccountView = activeFilterSelection.type === 'account';
 
   const magnifiedTrades = React.useMemo(() => {
     if (isIndividualAccountView) {
-      // In single account view, show individual trades without magnification
       return scopedTrades.map(t => ({
         ...t,
         magnifiedPnL: t.netPnL || 0,
@@ -243,45 +241,45 @@ export default function TradeViewPage() {
       }));
     }
 
-    // Cluster by leaderTradeId or unique execution key
+    // Cluster executions by execution key (symbol + openDate + entryTime + side)
     const clusters: Record<string, {
       baseTrade: any;
       allIds: any[];
-      totalPnL: number;
-      accountNames: Set<string>;
+      uniqueAccountNames: Set<string>;
     }> = {};
 
     scopedTrades.forEach(trade => {
-      // Use leader_trade_id/leaderTradeId if available, otherwise cluster by timestamp + symbol + prices
       const clusterKey = trade.leaderTradeId || trade.leader_trade_id 
         ? `leader_${trade.leaderTradeId || trade.leader_trade_id}`
         : (trade.openDate && trade.entryTime && trade.symbol)
-        ? `exec_${trade.openDate}_${trade.entryTime}_${trade.symbol}_${trade.side}_${trade.entryPrice}`
+        ? `exec_${trade.openDate}_${trade.entryTime}_${trade.symbol}_${trade.side}`
         : `trade_${trade.id}`;
 
       if (!clusters[clusterKey]) {
         clusters[clusterKey] = {
           baseTrade: trade,
           allIds: [],
-          totalPnL: 0,
-          accountNames: new Set()
+          uniqueAccountNames: new Set()
         };
       }
 
       clusters[clusterKey].allIds.push(trade.id);
-      clusters[clusterKey].totalPnL += (trade.netPnL || 0);
-      if (trade.account) clusters[clusterKey].accountNames.add(trade.account);
+      if (trade.account) {
+        clusters[clusterKey].uniqueAccountNames.add(trade.account);
+      }
     });
 
-    return Object.values(clusters).map(({ baseTrade, allIds, totalPnL, accountNames }) => {
-      const count = accountNames.size || allIds.length || 1;
-      const individualPnL = count > 0 ? totalPnL / count : baseTrade.netPnL;
+    return Object.values(clusters).map(({ baseTrade, allIds, uniqueAccountNames }) => {
+      // Multiply the trade's single-account return by the exact count of unique accounts traded
+      const uniqueAccountCount = uniqueAccountNames.size > 0 ? uniqueAccountNames.size : 1;
+      const individualPnL = Number(baseTrade.netPnL) || 0;
+      const magnifiedPnL = individualPnL * uniqueAccountCount;
 
       return {
         ...baseTrade,
-        magnifiedPnL: totalPnL,
+        magnifiedPnL,
         individualPnL,
-        accountCount: count,
+        accountCount: uniqueAccountCount,
         allIds
       };
     });

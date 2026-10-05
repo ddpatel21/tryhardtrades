@@ -1,19 +1,41 @@
 import { db, TradeItem, TradingAccount } from '@/lib/db';
 
 /**
- * Replicates a newly saved leader trade across all other accounts in the same group.
+ * Replicates a newly saved leader trade across distinct follower accounts in the same group.
+ * Deduplicates by account name so duplicate records in the accounts table do not spawn duplicate trades.
  */
 export async function copyLeaderTradeToGroup(leaderTrade: TradeItem) {
   if (!leaderTrade.account || !leaderTrade.accountGroup || !leaderTrade.id) return;
 
-  const accounts = await db.accounts.where('groupName').equals(leaderTrade.accountGroup).toArray();
-  const followerAccounts = accounts.filter(a => a.name !== leaderTrade.account);
+  const allGroupAccounts = await db.accounts.where('groupName').equals(leaderTrade.accountGroup).toArray();
+
+  // Deduplicate follower accounts by unique name and exclude the leader itself
+  const seenAccountNames = new Set<string>();
+  const followerAccounts: TradingAccount[] = [];
+
+  for (const acc of allGroupAccounts) {
+    if (acc.name !== leaderTrade.account && !seenAccountNames.has(acc.name)) {
+      seenAccountNames.add(acc.name);
+      followerAccounts.push(acc);
+    }
+  }
 
   if (followerAccounts.length === 0) return;
 
   const { supabase } = await import('@/lib/supabase');
 
   for (const follower of followerAccounts) {
+    // Guard against re-inserting if a clone already exists for this follower
+    try {
+      const existing = await db.trades
+        .where('leaderTradeId')
+        .equals(leaderTrade.id)
+        .and(t => t.account === follower.name)
+        .first();
+
+      if (existing) continue;
+    } catch (err) {}
+
     const followerTradePayload = {
       symbol: leaderTrade.symbol,
       open_date: leaderTrade.openDate,
@@ -39,17 +61,21 @@ export async function copyLeaderTradeToGroup(leaderTrade: TradeItem) {
       notes: leaderTrade.notes || null,
     };
 
-    let followerDbId: number = Date.now() + Math.floor(Math.random() * 1000);
+    let followerDbId: number = Date.now() + Math.floor(Math.random() * 100000);
 
     try {
-      const { data, error } = await supabase.from('trades').insert(followerTradePayload).select('id').single();
+      const { data } = await supabase
+        .from('trades')
+        .insert(followerTradePayload)
+        .select('id')
+        .single();
       if (data && data.id) followerDbId = data.id;
     } catch (err) {
       console.warn('Supabase follower insert error:', err);
     }
 
     try {
-      await db.trades.add({
+      await db.trades.put({
         ...leaderTrade,
         id: followerDbId,
         account: follower.name,
