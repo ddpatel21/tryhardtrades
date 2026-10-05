@@ -54,8 +54,10 @@ const INITIAL_COLUMNS: ColumnConfig[] = [
   { id: 'account', label: 'Account / Group' },
   { id: 'status', label: 'Status' },
   { id: 'side', label: 'Side' },
+  { id: 'contractsTraded', label: 'Contracts' },
   { id: 'entryPrice', label: 'Entry price' },
   { id: 'exitPrice', label: 'Exit price' },
+  { id: 'commissions', label: 'Fees' },
   { id: 'netPnL', label: 'Magnified Net P&L', sortable: true },
   { id: 'setupTag', label: 'Setup Tag' },
   { id: 'strategy', label: 'Strategy' },
@@ -1053,6 +1055,18 @@ export default function TradeViewPage() {
                             );
                           case 'side':
                             return <td key={col.id} className="py-3.5 px-4 font-semibold text-slate-500">{trade.side || 'LONG'}</td>;
+                          case 'contractsTraded':
+                            return (
+                              <td key={col.id} className="py-3.5 px-4 font-mono font-semibold text-slate-700">
+                                {trade.contractsTraded || 1}
+                              </td>
+                            );
+                          case 'commissions':
+                            return (
+                              <td key={col.id} className="py-3.5 px-4 font-mono text-slate-500 font-semibold">
+                                ${(Number(trade.commissions || 0) * (trade.accountCount || 1)).toFixed(2)}
+                              </td>
+                            );
                           case 'entryPrice':
                             return <td key={col.id} className="py-3.5 px-4 font-mono font-semibold">${Number(trade.entryPrice).toFixed(2)}</td>;
                           case 'exitPrice':

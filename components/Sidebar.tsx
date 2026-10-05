@@ -9,24 +9,24 @@ import {
   TableProperties, 
   Tags, 
   Plus, 
-  Target,
-  Layers,
-  ChevronDown,
-  ChevronRight,
-  UserPlus,
-  Settings,
-  Trash2,
-  Edit2,
-  ChevronLeft,
-  Menu,
-  LogOut,
-  History,
-  UploadCloud,
-  CheckCircle2,
-  AlertCircle,
-  RefreshCw,
-  Star,
-  Lock
+  Target, 
+  Layers, 
+  ChevronDown, 
+  ChevronRight, 
+  UserPlus, 
+  Settings, 
+  Trash2, 
+  Edit2, 
+  ChevronLeft, 
+  Menu, 
+  LogOut, 
+  History, 
+  UploadCloud, 
+  CheckCircle2, 
+  AlertCircle, 
+  RefreshCw, 
+  Star, 
+  Lock 
 } from 'lucide-react';
 import { cloudDb } from '@/lib/cloudDb';
 import { db, TradingAccount, TradeItem } from '@/lib/db';
@@ -54,7 +54,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
 
-  // Strict Sync: Fetch from Supabase as primary source of truth, then overwrite local Dexie cache
+  // Load accounts directly from Supabase to prevent ghost/local account duplication
   const loadAccounts = async () => {
     try {
       const { supabase } = await import('@/lib/supabase');
@@ -94,7 +94,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
       console.warn('Supabase accounts fetch failed, falling back to local DB:', err);
     }
 
-    // Fallback if offline
     const localData = await cloudDb.getAccounts();
     setAccounts(localData);
   };
@@ -243,11 +242,11 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
       window.dispatchEvent(new CustomEvent('account-filter-changed'));
     } catch (err) {
       console.error('Error saving leader status to Supabase:', err);
-      loadAccounts(); // Revert on failure
+      loadAccounts();
     }
   };
 
-  // Robust Tradovate CSV Parser for Performance & Order Fills
+  // Robust Tradovate CSV Parser with fee rates: $1.00/micro, $3.50/mini
   const parseTradovateCSV = (csvText: string): Partial<TradeItem>[] => {
     const lines = csvText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     if (lines.length < 2) return [];
@@ -262,6 +261,12 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
         return -parseFloat(cleaned.slice(1, -1)) || 0;
       }
       return parseFloat(cleaned) || 0;
+    };
+
+    const getCommissionRate = (sym: string): number => {
+      const upper = sym.toUpperCase().trim();
+      const isMicro = upper.startsWith('M') && upper.length >= 4 && !upper.startsWith('MET');
+      return isMicro ? 1.00 : 3.50;
     };
 
     // Format A: Tradovate "Performance / Closed Positions" Report
@@ -284,7 +289,12 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
         const qty = cleanNumber(parts[qtyIdx]) || 1;
         const buyPrice = cleanNumber(parts[buyPriceIdx]);
         const sellPrice = cleanNumber(parts[sellPriceIdx]);
-        const netPnL = cleanNumber(parts[pnlIdx]);
+        const grossPnL = cleanNumber(parts[pnlIdx]);
+
+        // Commission Calculation: $1/micro, $3.50/mini
+        const commissionRate = getCommissionRate(symbol);
+        const totalCommissions = Number((qty * commissionRate).toFixed(2));
+        const netPnL = Number((grossPnL - totalCommissions).toFixed(2));
 
         const boughtStr = parts[boughtTimeIdx] || '';
         const soldStr = parts[soldTimeIdx] || '';
@@ -329,8 +339,8 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
           entryPrice,
           exitPrice,
           netPnL,
-          grossPnL: netPnL,
-          commissions: 0,
+          grossPnL,
+          commissions: totalCommissions,
           points: Number(points.toFixed(2)),
           ticks: Number(ticks.toFixed(2)),
           ticksPerContract: 4,
@@ -357,7 +367,11 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
       const side = sideRaw.includes('B') ? 'LONG' : 'SHORT';
       const qty = cleanNumber(parts[qtyIdx]) || 1;
       const price = cleanNumber(parts[priceIdx]);
-      const netPnL = cleanNumber(parts[pnlIdx]);
+      const grossPnL = cleanNumber(parts[pnlIdx]);
+
+      const commissionRate = getCommissionRate(symbol);
+      const totalCommissions = Number((qty * commissionRate).toFixed(2));
+      const netPnL = Number((grossPnL - totalCommissions).toFixed(2));
 
       const rawTime = timeIdx >= 0 ? parts[timeIdx] : new Date().toISOString();
       let openDate = new Date().toISOString().split('T')[0];
@@ -387,8 +401,8 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
         entryPrice: price,
         exitPrice: price,
         netPnL,
-        grossPnL: netPnL,
-        commissions: 0,
+        grossPnL,
+        commissions: totalCommissions,
         points: 0,
         ticks: 0,
         ticksPerContract: 4,
