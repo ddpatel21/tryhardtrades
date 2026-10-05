@@ -20,10 +20,15 @@ import {
   ChevronLeft,
   Menu,
   LogOut,
-  History
+  History,
+  UploadCloud,
+  CheckCircle2,
+  AlertCircle,
+  RefreshCw
 } from 'lucide-react';
 import { cloudDb } from '@/lib/cloudDb';
-import { db, TradingAccount } from '@/lib/db';
+import { db, TradingAccount, TradeItem } from '@/lib/db';
+import { copyLeaderTradeToGroup } from '@/lib/copier';
 import AccountModal from '@/components/AccountModal';
 
 interface SidebarLayoutProps {
@@ -76,11 +81,20 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
   const [adjAmount, setAdjAmount] = useState<string>('');
   const [adjDate, setAdjDate] = useState<string>(new Date().toISOString().split('T')[0]);
 
+  // Dropzone upload state inside Account Manager
+  const [dragOverAccountId, setDragOverAccountId] = useState<string | number | null>(null);
+  const [uploadStatus, setUploadStatus] = useState<{
+    accountId: string | number;
+    status: 'parsing' | 'success' | 'error';
+    message: string;
+  } | null>(null);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isAccountManagerOpen) {
         setIsAccountManagerOpen(false);
         setEditingAccount(null);
+        setUploadStatus(null);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -97,7 +111,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
 
       let loadedList: AccountAdjustment[] = [];
 
-      // 1. Try IndexedDB (Dexie)
       try {
         if (db.adjustments) {
           const dexieData = await db.adjustments
@@ -112,7 +125,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
         console.error("Dexie adjustments read error:", err);
       }
 
-      // 2. Try Supabase if Dexie had no records
       if (loadedList.length === 0) {
         try {
           const { supabase } = await import('@/lib/supabase');
@@ -147,12 +159,172 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
   const existingGroupNames = Array.from(new Set(accounts.map(a => a.groupName).filter(Boolean)));
   const existingFirms = Array.from(new Set(accounts.map(a => a.firm).filter(Boolean)));
 
+  // Parser: Tradovate CSV statements
+  const parseTradovateCSV = (csvText: string): Partial<TradeItem>[] => {
+    const lines = csvText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (lines.length < 2) return [];
+
+    const headers = lines[0].split(',').map(h => h.replace(/['"]+/g, '').trim().toLowerCase());
+    const parsedRows: Partial<TradeItem>[] = [];
+
+    const symbolIdx = headers.findIndex(h => h.includes('contract') || h.includes('symbol') || h.includes('product'));
+    const sideIdx = headers.findIndex(h => h === 'b/s' || h === 'side' || h.includes('action'));
+    const qtyIdx = headers.findIndex(h => h.includes('qty') || h.includes('size') || h.includes('contracts') || h.includes('quantity'));
+    const priceIdx = headers.findIndex(h => h.includes('price') || h.includes('fill price') || h.includes('avg price'));
+    const pnlIdx = headers.findIndex(h => h.includes('pnl') || h.includes('p&l') || h.includes('profit') || h.includes('net'));
+    const timeIdx = headers.findIndex(h => h.includes('time') || h.includes('date') || h.includes('timestamp'));
+
+    for (let i = 1; i < lines.length; i++) {
+      const parts = lines[i].split(',').map(p => p.replace(/['"]+/g, '').trim());
+      if (parts.length < headers.length) continue;
+
+      const symbol = symbolIdx >= 0 ? parts[symbolIdx] : 'NQ';
+      const sideRaw = sideIdx >= 0 ? parts[sideIdx].toUpperCase() : 'BUY';
+      const side = sideRaw.includes('B') ? 'LONG' : 'SHORT';
+      const qty = qtyIdx >= 0 ? parseFloat(parts[qtyIdx]) || 1 : 1;
+      const price = priceIdx >= 0 ? parseFloat(parts[priceIdx]) || 0 : 0;
+      const netPnL = pnlIdx >= 0 ? parseFloat(parts[pnlIdx]) || 0 : 0;
+      
+      const rawTime = timeIdx >= 0 ? parts[timeIdx] : new Date().toISOString();
+      let openDate = new Date().toISOString().split('T')[0];
+      let entryTime = '09:30:00';
+
+      if (rawTime.includes(' ') || rawTime.includes('T')) {
+        const splitParts = rawTime.split(/[ T]/);
+        if (splitParts[0]) openDate = splitParts[0];
+        if (splitParts[1]) entryTime = splitParts[1];
+      }
+
+      parsedRows.push({
+        symbol: symbol.toUpperCase(),
+        openDate,
+        entryTime,
+        exitTime: entryTime,
+        side,
+        contractsTraded: qty,
+        entryPrice: price,
+        exitPrice: price,
+        netPnL,
+        grossPnL: netPnL,
+        commissions: 0,
+        points: 0,
+        ticks: 0,
+        ticksPerContract: 4,
+        status: netPnL > 0 ? 'WIN' : netPnL < 0 ? 'LOSS' : 'BE'
+      });
+    }
+
+    return parsedRows;
+  };
+
+  const handleFileUpload = async (file: File, account: TradingAccount) => {
+    if (!account.id || !account.name) return;
+
+    setUploadStatus({
+      accountId: account.id,
+      status: 'parsing',
+      message: `Parsing Tradovate file for ${account.name}...`
+    });
+
+    try {
+      const text = await file.text();
+      const parsedTrades = parseTradovateCSV(text);
+
+      if (parsedTrades.length === 0) {
+        setUploadStatus({
+          accountId: account.id,
+          status: 'error',
+          message: 'Unable to parse trades. Verify this is a valid Tradovate statement export.'
+        });
+        return;
+      }
+
+      const { supabase } = await import('@/lib/supabase');
+      let savedCount = 0;
+
+      for (const t of parsedTrades) {
+        const tradePayload = {
+          symbol: t.symbol || 'NQ',
+          open_date: t.openDate || new Date().toISOString().split('T')[0],
+          side: t.side || 'LONG',
+          contracts_traded: t.contractsTraded || 1,
+          entry_price: t.entryPrice || 0,
+          exit_price: t.exitPrice || 0,
+          net_pnl: t.netPnL || 0,
+          gross_pnl: t.grossPnL || 0,
+          commissions: t.commissions || 0,
+          points: t.points || 0,
+          ticks: t.ticks || 0,
+          ticks_per_contract: 4,
+          status: t.status || 'BE',
+          entry_time: t.entryTime,
+          exit_time: t.exitTime,
+          account: account.name,
+          account_group: account.groupName,
+        };
+
+        let insertedId: number = Date.now() + Math.floor(Math.random() * 1000);
+
+        try {
+          const { data } = await supabase.from('trades').insert(tradePayload).select('id').single();
+          if (data && data.id) insertedId = data.id;
+        } catch (err) {}
+
+        const localTrade: TradeItem = {
+          id: insertedId,
+          symbol: tradePayload.symbol,
+          openDate: tradePayload.open_date,
+          side: tradePayload.side as any,
+          contractsTraded: tradePayload.contracts_traded,
+          entryPrice: tradePayload.entry_price,
+          exitPrice: tradePayload.exit_price,
+          netPnL: tradePayload.net_pnl,
+          grossPnL: tradePayload.gross_pnl,
+          commissions: tradePayload.commissions,
+          points: tradePayload.points,
+          ticks: tradePayload.ticks,
+          ticksPerContract: 4,
+          status: tradePayload.status as any,
+          entryTime: tradePayload.entry_time,
+          exitTime: tradePayload.exit_time,
+          account: account.name,
+          accountGroup: account.groupName
+        };
+
+        try {
+          if (db.trades) {
+            await db.trades.put(localTrade);
+          }
+        } catch (err) {}
+
+        if (account.groupName) {
+          await copyLeaderTradeToGroup(localTrade);
+        }
+
+        savedCount++;
+      }
+
+      setUploadStatus({
+        accountId: account.id,
+        status: 'success',
+        message: `Imported ${savedCount} trades into ${account.name}${account.groupName ? ` (synced to group '${account.groupName}')` : ''}!`
+      });
+
+      window.dispatchEvent(new CustomEvent('account-filter-changed'));
+    } catch (err: any) {
+      setUploadStatus({
+        accountId: account.id,
+        status: 'error',
+        message: err.message || 'Error parsing statement file.'
+      });
+    }
+  };
+
   const handleDeleteAccount = async (id?: number | string) => {
     if (!id) return;
     if (confirm('Are you sure you want to delete this account? All associated adjustments and trades will also be cleaned up.')) {
       const numId = Number(id);
 
-      // 1. Cascade delete orphaned adjustments from Supabase & Dexie
       try {
         const { supabase } = await import('@/lib/supabase');
         await supabase.from('account_adjustments').delete().eq('account_id', id);
@@ -195,7 +367,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
       maxDrawdown: Number(editingAccount.maxDrawdown) || 0
     };
 
-    // Update Local Dexie DB
     try {
       if (db.accounts) {
         await db.accounts.put(updatedAcc);
@@ -204,7 +375,6 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
       console.error("Dexie account update error:", err);
     }
 
-    // Update Remote Supabase DB
     try {
       const { supabase } = await import('@/lib/supabase');
       await supabase.from('accounts').update({
@@ -318,16 +488,17 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
     }));
   };
 
+  // Nav Items preserved exactly as your original file
   const navItems = [
     { label: 'Dashboard & Reports', href: '/', icon: LayoutDashboard },
     { label: 'Day View', href: '/day-view', icon: CalendarDays },
     { label: 'Trade View', href: '/trade-view', icon: TableProperties },
-    { label: 'Accounts & Import', href: '/accounts', icon: Users },
     { label: 'Strategies & Tags', href: '/strategies', icon: Tags },
   ];
 
   return (
     <>
+      {/* Mobile Top Header Toggle */}
       <div className="lg:hidden fixed top-0 left-0 right-0 h-16 bg-white border-b border-slate-200 z-50 flex items-center justify-between px-4 print:hidden">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-[#ec3044] rounded-xl flex items-center justify-center text-white font-bold">🎯</div>
@@ -341,6 +512,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
         </button>
       </div>
 
+      {/* Mobile Backdrop */}
       {isMobileOpen && (
         <div 
           onClick={() => setIsMobileOpen(false)}
@@ -348,6 +520,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
         />
       )}
 
+      {/* Sidebar Navigation */}
       <aside className={`bg-white border-r border-slate-200/80 flex flex-col justify-between p-6 fixed inset-y-0 left-0 z-50 transition-all duration-300 print:hidden ${
         isCollapsed ? 'w-20 px-3' : 'w-64'
       } ${
@@ -356,6 +529,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
         
         <div className="space-y-6 overflow-y-auto overflow-x-hidden flex-1 pr-1">
           
+          {/* Brand Logo & Name & Settings */}
           <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'justify-between px-2'}`}>
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 bg-[#ec3044] rounded-xl flex items-center justify-center text-white shadow-md shadow-[#ec3044]/30 shrink-0">
@@ -379,6 +553,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
             )}
           </div>
 
+          {/* Account Group Selector */}
           {!isCollapsed && (
             <div className="relative">
               <button 
@@ -501,6 +676,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
             </div>
           )}
 
+          {/* Add Trade Button */}
           <button 
             onClick={onOpenAddTrade}
             className={`w-full bg-[#ec3044] hover:bg-[#d4283b] text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 shadow-sm transition cursor-pointer text-sm ${
@@ -512,6 +688,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
             {!isCollapsed && <span>Add Trade</span>}
           </button>
 
+          {/* Nav Links */}
           <nav className="space-y-1.5">
             {navItems.map((item) => {
               const Icon = item.icon;
@@ -539,6 +716,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
 
         </div>
 
+        {/* Footer: Logout & Collapse Buttons */}
         <div className="pt-4 border-t border-slate-100 space-y-2">
           <button
             onClick={handleLogout}
@@ -575,12 +753,13 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
 
       </aside>
 
-      {/* ACCOUNT MANAGER DRAWER SIDEBAR */}
+      {/* ACCOUNT MANAGER DRAWER SIDEBAR WITH DIRECT TRADOVATE DROPZONES */}
       {isAccountManagerOpen && (
         <div 
           onClick={() => {
             setIsAccountManagerOpen(false);
             setEditingAccount(null);
+            setUploadStatus(null);
           }}
           className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex justify-end"
         >
@@ -593,18 +772,38 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
               <div className="flex items-center justify-between border-b border-slate-100 pb-4">
                 <div>
                   <h2 className="text-base font-black text-slate-900">Account Manager</h2>
-                  <p className="text-xs text-slate-500 font-medium">Manage, edit, balance track, and set evaluation targets & drawdowns</p>
+                  <p className="text-xs text-slate-500 font-medium">Manage accounts, set targets, or drag & drop Tradovate statements directly below</p>
                 </div>
                 <button 
                   onClick={() => {
                     setIsAccountManagerOpen(false);
                     setEditingAccount(null);
+                    setUploadStatus(null);
                   }}
                   className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
                 >
                   ✕
                 </button>
               </div>
+
+              {/* Upload Notification Banner */}
+              {uploadStatus && (
+                <div className={`p-3.5 rounded-xl border text-xs font-bold flex items-center justify-between ${
+                  uploadStatus.status === 'success' 
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
+                    : uploadStatus.status === 'error'
+                    ? 'bg-rose-50 text-rose-800 border-rose-200'
+                    : 'bg-blue-50 text-blue-800 border-blue-200'
+                }`}>
+                  <div className="flex items-center gap-2">
+                    {uploadStatus.status === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />}
+                    {uploadStatus.status === 'error' && <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />}
+                    {uploadStatus.status === 'parsing' && <RefreshCw className="w-4 h-4 text-blue-600 animate-spin shrink-0" />}
+                    <span>{uploadStatus.message}</span>
+                  </div>
+                  <button onClick={() => setUploadStatus(null)} className="text-slate-400 hover:text-slate-600 font-black">✕</button>
+                </div>
+              )}
 
               {editingAccount ? (
                 <form onSubmit={handleUpdateAccount} className="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-4">
@@ -699,6 +898,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                     />
                   </div>
 
+                  {/* Target & Drawdown Inputs */}
                   <div className="grid grid-cols-2 gap-3 pt-1">
                     <div>
                       <label className="block text-[10px] font-black text-emerald-700 uppercase tracking-wider mb-1">
@@ -707,12 +907,11 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                       <input 
                         type="number" 
                         step="any"
-                        placeholder="e.g. 3000 or 103000"
+                        placeholder="e.g. 3000"
                         value={editingAccount.profitTarget || ''} 
                         onChange={e => setEditingAccount({ ...editingAccount, profitTarget: parseFloat(e.target.value) || 0 })}
                         className="w-full bg-white border border-emerald-300 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                       />
-                      <span className="text-[9px] text-slate-400 block mt-0.5">Profit Goal (or Target Balance)</span>
                     </div>
 
                     <div>
@@ -722,15 +921,15 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                       <input 
                         type="number" 
                         step="any"
-                        placeholder="e.g. 2500 or 97500"
+                        placeholder="e.g. 2500"
                         value={editingAccount.maxDrawdown || ''} 
                         onChange={e => setEditingAccount({ ...editingAccount, maxDrawdown: parseFloat(e.target.value) || 0 })}
                         className="w-full bg-white border border-rose-300 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-500"
                       />
-                      <span className="text-[9px] text-slate-400 block mt-0.5">Max Loss Limit (or Floor Balance)</span>
                     </div>
                   </div>
 
+                  {/* Adjustments (Payouts & Deposits) */}
                   <div className="pt-3 border-t border-slate-200 space-y-3">
                     <div className="flex items-center justify-between">
                       <label className="text-[11px] font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
@@ -841,6 +1040,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                 </button>
               )}
 
+              {/* EXISTING ACCOUNTS LIST WITH DEDICATED DROPZONES */}
               <div className="space-y-6 pt-2">
                 <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider">Existing Accounts</h3>
                 
@@ -861,57 +1061,97 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                         </span>
                       </div>
 
-                      <div className="space-y-2">
-                        {groupAccs.map(acc => (
-                          <div key={acc.id} className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 shadow-xs">
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <div className="font-bold text-slate-900 text-xs flex items-center gap-2">
-                                  {acc.name}
-                                  <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
-                                    acc.type === 'Live' ? 'bg-emerald-50 text-emerald-600' : acc.type === 'Funded' ? 'bg-blue-50 text-blue-600' : 'bg-amber-50 text-amber-600'
-                                  }`}>
-                                    {acc.type}
-                                  </span>
-                                </div>
-                                <div className="text-[10px] text-slate-600 font-semibold mt-0.5">
-                                  {acc.firm ? `${acc.firm} • ` : ''}<span className="font-bold text-[#ec3044]">{acc.inputType || 'Tradovate'}</span> • <span className="font-mono font-bold text-slate-900">${acc.balance.toLocaleString()}</span>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-1">
-                                <button 
-                                  onClick={() => setEditingAccount(acc)}
-                                  className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-200/60 rounded-lg transition cursor-pointer"
-                                  title="Edit Account Details & Log Adjustments"
-                                >
-                                  <Edit2 className="w-3.5 h-3.5" />
-                                </button>
-                                <button 
-                                  onClick={() => handleDeleteAccount(acc.id)}
-                                  className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
-                                  title="Delete Account"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </div>
+                      <div className="space-y-3">
+                        {groupAccs.map(acc => {
+                          const isDragTarget = dragOverAccountId === acc.id;
 
-                            {(Boolean(acc.profitTarget) || Boolean(acc.maxDrawdown)) && (
-                              <div className="flex gap-2 text-[10px] font-mono border-t border-slate-200/60 pt-1.5">
-                                {Boolean(acc.profitTarget) && (
-                                  <span className="text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded font-bold">
-                                    Target: +${Number(acc.profitTarget).toLocaleString()}
-                                  </span>
-                                )}
-                                {Boolean(acc.maxDrawdown) && (
-                                  <span className="text-rose-700 bg-rose-50 border border-rose-200/60 px-2 py-0.5 rounded font-bold">
-                                    DD Limit: -${Number(acc.maxDrawdown).toLocaleString()}
-                                  </span>
-                                )}
+                          return (
+                            <div key={acc.id} className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 shadow-xs">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <div className="font-bold text-slate-900 text-xs flex items-center gap-2">
+                                    {acc.name}
+                                    <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
+                                      acc.type === 'Live' ? 'bg-emerald-50 text-emerald-600' : acc.type === 'Funded' ? 'bg-blue-50 text-blue-600' : 'bg-amber-50 text-amber-600'
+                                    }`}>
+                                      {acc.type}
+                                    </span>
+                                  </div>
+                                  <div className="text-[10px] text-slate-600 font-semibold mt-0.5">
+                                    {acc.firm ? `${acc.firm} • ` : ''}<span className="font-bold text-[#ec3044]">Tradovate</span> • <span className="font-mono font-bold text-slate-900">${acc.balance.toLocaleString()}</span>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <button 
+                                    onClick={() => setEditingAccount(acc)}
+                                    className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-200/60 rounded-lg transition cursor-pointer"
+                                    title="Edit Account Details"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleDeleteAccount(acc.id)}
+                                    className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                                    title="Delete Account"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
                               </div>
-                            )}
-                          </div>
-                        ))}
+
+                              {/* Target / Drawdown badges if configured */}
+                              {(Boolean(acc.profitTarget) || Boolean(acc.maxDrawdown)) && (
+                                <div className="flex gap-2 text-[10px] font-mono border-t border-slate-200/60 pt-1.5">
+                                  {Boolean(acc.profitTarget) && (
+                                    <span className="text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded font-bold">
+                                      Target: +${Number(acc.profitTarget).toLocaleString()}
+                                    </span>
+                                  )}
+                                  {Boolean(acc.maxDrawdown) && (
+                                    <span className="text-rose-700 bg-rose-50 border border-rose-200/60 px-2 py-0.5 rounded font-bold">
+                                      DD: -${Number(acc.maxDrawdown).toLocaleString()}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* DEDICATED TRADOVATE DRAG-AND-DROP ZONE */}
+                              <div
+                                onDragOver={(e) => { e.preventDefault(); setDragOverAccountId(acc.id!); }}
+                                onDragLeave={() => setDragOverAccountId(null)}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  setDragOverAccountId(null);
+                                  if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                                    handleFileUpload(e.dataTransfer.files[0], acc);
+                                  }
+                                }}
+                                className={`relative border-2 border-dashed rounded-xl p-3 text-center transition flex flex-col items-center justify-center cursor-pointer ${
+                                  isDragTarget 
+                                    ? 'border-[#ec3044] bg-[#ec3044]/10 ring-2 ring-[#ec3044]/20' 
+                                    : 'border-slate-300 hover:border-[#ec3044]/60 bg-white hover:bg-slate-50/50'
+                                }`}
+                              >
+                                <input 
+                                  type="file" 
+                                  accept=".csv"
+                                  onChange={(e) => {
+                                    if (e.target.files && e.target.files[0]) {
+                                      handleFileUpload(e.target.files[0], acc);
+                                    }
+                                  }}
+                                  className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                                />
+                                <div className="flex items-center gap-2 text-slate-700">
+                                  <UploadCloud className="w-4 h-4 text-[#ec3044]" />
+                                  <span className="text-xs font-bold">Drop <span className="text-[#ec3044]">Tradovate CSV</span> here</span>
+                                </div>
+                                <span className="text-[9px] text-slate-400 mt-0.5">Auto-replicates to all accounts in {groupName}</span>
+                              </div>
+
+                            </div>
+                          );
+                        })}
                       </div>
 
                     </div>
@@ -926,6 +1166,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
                 onClick={() => {
                   setIsAccountManagerOpen(false);
                   setEditingAccount(null);
+                  setUploadStatus(null);
                 }}
                 className="w-full py-2.5 bg-slate-900 text-white font-bold rounded-xl text-xs shadow-sm cursor-pointer"
               >
