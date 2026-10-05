@@ -24,7 +24,8 @@ import {
   GripHorizontal,
   Wallet,
   ArrowDownRight,
-  Copy
+  Layers,
+  Sparkles
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import AddTradeModal from '@/components/AddTradeModal';
@@ -50,12 +51,12 @@ interface AccountAdjustment {
 const INITIAL_COLUMNS: ColumnConfig[] = [
   { id: 'openDate', label: 'Open date', sortable: true },
   { id: 'symbol', label: 'Symbol' },
-  { id: 'account', label: 'Account' },
+  { id: 'account', label: 'Account / Group' },
   { id: 'status', label: 'Status' },
   { id: 'side', label: 'Side' },
   { id: 'entryPrice', label: 'Entry price' },
   { id: 'exitPrice', label: 'Exit price' },
-  { id: 'netPnL', label: 'Net P&L', sortable: true },
+  { id: 'netPnL', label: 'Magnified Net P&L', sortable: true },
   { id: 'setupTag', label: 'Setup Tag' },
   { id: 'strategy', label: 'Strategy' },
   { id: 'mistakeTag', label: 'Mistake Tag' },
@@ -85,7 +86,6 @@ export default function TradeViewPage() {
     setSavedSetups(setupsList);
     setSavedMistakes(mistakesList);
 
-    // Load Adjustments from Supabase & Dexie
     let loadedAdjustments: AccountAdjustment[] = [];
     try {
       const { supabase } = await import('@/lib/supabase');
@@ -122,50 +122,40 @@ export default function TradeViewPage() {
   const [showBulkMenu, setShowBulkMenu] = useState(false);
   const [isAddTradeOpen, setIsAddTradeOpen] = useState(false);
 
-  // Active Sidebar Account / Group Filter Selection State
   const [activeFilterSelection, setActiveFilterSelection] = useState<{ 
     type: 'global' | 'group' | 'account'; 
     name: string 
   }>({ type: 'global', name: 'All Accounts' });
 
-  // Column Drag and Drop State
   const [columns, setColumns] = useState<ColumnConfig[]>(INITIAL_COLUMNS);
   const [draggedColumnId, setDraggedColumnId] = useState<string | null>(null);
   const [dropTargetColumnId, setDropTargetColumnId] = useState<string | null>(null);
 
-  // Sorting States
   const [sortField, setSortField] = useState<SortField>('openDate');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
-  // Filter Popover States
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [filterSymbol, setFilterSymbol] = useState('');
   const [filterSide, setFilterSide] = useState<'ALL' | 'LONG' | 'SHORT'>('ALL');
   const [filterStatus, setFilterStatus] = useState<'ALL' | 'WIN' | 'LOSS'>('ALL');
 
-  // Date Range Popover States
   const [showDateMenu, setShowDateMenu] = useState(false);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
 
-  // Mass Tag Modal State
   const [tagModalType, setTagModalType] = useState<'setup' | 'mistake' | 'strategy' | null>(null);
   const [tagInputVal, setTagInputVal] = useState('');
 
-  // Interactive inline cell editing
   const [editingCellTradeId, setEditingCellTradeId] = useState<any | null>(null);
   const [editingCellType, setEditingCellType] = useState<'strategy' | 'setup' | 'mistake' | 'account' | null>(null);
 
-  // Popup Modal State for creating new tag from table inline edit
   const [activeNewModalType, setActiveNewModalType] = useState<'strategy' | 'setup' | 'mistake' | null>(null);
   const [newModalInputVal, setNewModalInputVal] = useState('');
   const [targetTradeIdForNewTag, setTargetTradeIdForNewTag] = useState<any | null>(null);
 
-  // Right-Click Context Menu State
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; tradeId: any } | null>(null);
   const [contextSubAction, setContextSubAction] = useState<'strategy' | 'setup' | 'mistake' | 'account' | null>(null);
 
-  // Listen to sidebar account filter changes
   useEffect(() => {
     const handleAccountFilterChanged = (e: any) => {
       const detail = e.detail;
@@ -186,7 +176,6 @@ export default function TradeViewPage() {
     return () => window.removeEventListener('account-filter-changed', handleAccountFilterChanged);
   }, []);
 
-  // Handle ESC and clicks to close context/modals
   useEffect(() => {
     const handleGlobalClick = () => {
       setContextMenu(null);
@@ -209,8 +198,8 @@ export default function TradeViewPage() {
     };
   }, []);
 
-  // 1. Filter Logic (Sidebar Account/Group Scope + Search & Attributes)
-  const filteredTrades = rawTrades.filter((trade) => {
+  // 1. Base Filter by Scope
+  const scopedTrades = rawTrades.filter((trade) => {
     if (activeFilterSelection.type === 'account') {
       if (trade.account !== activeFilterSelection.name) return false;
     } else if (activeFilterSelection.type === 'group') {
@@ -238,7 +227,67 @@ export default function TradeViewPage() {
     return true;
   });
 
-  // Filter adjustments based on active sidebar account/group selection (excluding orphaned adjustments)
+  // 2. Magnification & Clustering Logic
+  // When viewing "All Accounts" or "Group: X", consolidate copied trades into 1 row
+  const isIndividualAccountView = activeFilterSelection.type === 'account';
+
+  const magnifiedTrades = React.useMemo(() => {
+    if (isIndividualAccountView) {
+      // In single account view, show individual trades without magnification
+      return scopedTrades.map(t => ({
+        ...t,
+        magnifiedPnL: t.netPnL || 0,
+        individualPnL: t.netPnL || 0,
+        accountCount: 1,
+        allIds: [t.id]
+      }));
+    }
+
+    // Cluster by leaderTradeId or unique execution key
+    const clusters: Record<string, {
+      baseTrade: any;
+      allIds: any[];
+      totalPnL: number;
+      accountNames: Set<string>;
+    }> = {};
+
+    scopedTrades.forEach(trade => {
+      // Use leader_trade_id/leaderTradeId if available, otherwise cluster by timestamp + symbol + prices
+      const clusterKey = trade.leaderTradeId || trade.leader_trade_id 
+        ? `leader_${trade.leaderTradeId || trade.leader_trade_id}`
+        : (trade.openDate && trade.entryTime && trade.symbol)
+        ? `exec_${trade.openDate}_${trade.entryTime}_${trade.symbol}_${trade.side}_${trade.entryPrice}`
+        : `trade_${trade.id}`;
+
+      if (!clusters[clusterKey]) {
+        clusters[clusterKey] = {
+          baseTrade: trade,
+          allIds: [],
+          totalPnL: 0,
+          accountNames: new Set()
+        };
+      }
+
+      clusters[clusterKey].allIds.push(trade.id);
+      clusters[clusterKey].totalPnL += (trade.netPnL || 0);
+      if (trade.account) clusters[clusterKey].accountNames.add(trade.account);
+    });
+
+    return Object.values(clusters).map(({ baseTrade, allIds, totalPnL, accountNames }) => {
+      const count = accountNames.size || allIds.length || 1;
+      const individualPnL = count > 0 ? totalPnL / count : baseTrade.netPnL;
+
+      return {
+        ...baseTrade,
+        magnifiedPnL: totalPnL,
+        individualPnL,
+        accountCount: count,
+        allIds
+      };
+    });
+  }, [scopedTrades, isIndividualAccountView]);
+
+  // Adjustments filter
   const validAccountIds = new Set(accounts.map(a => String(a.id)));
   const filteredAdjustments = adjustments
     .filter(adj => validAccountIds.has(String(adj.accountId)))
@@ -256,8 +305,8 @@ export default function TradeViewPage() {
       return true;
     });
 
-  // 2. Sorting Logic
-  const trades = [...filteredTrades].sort((a, b) => {
+  // 3. Sorting
+  const trades = [...magnifiedTrades].sort((a, b) => {
     if (!sortField) return 0;
 
     if (sortField === 'openDate') {
@@ -267,8 +316,8 @@ export default function TradeViewPage() {
     }
 
     if (sortField === 'netPnL') {
-      const pnlA = a.netPnL || 0;
-      const pnlB = b.netPnL || 0;
+      const pnlA = a.magnifiedPnL || 0;
+      const pnlB = b.magnifiedPnL || 0;
       return sortDirection === 'asc' ? pnlA - pnlB : pnlB - pnlA;
     }
 
@@ -297,13 +346,20 @@ export default function TradeViewPage() {
 
   const handleMassDelete = async () => {
     if (selectedTrades.length === 0) return;
-    if (confirm(`Are you sure you want to delete ${selectedTrades.length} trade(s)? Any group follower copies will also be deleted.`)) {
+    if (confirm(`Are you sure you want to delete ${selectedTrades.length} execution(s)? All follower copies across your accounts will also be deleted.`)) {
       const { supabase } = await import('@/lib/supabase');
+      
       for (const id of selectedTrades) {
-        await supabase.from('trades').delete().eq('id', id);
-        await deleteLeaderTradeCopies(id);
-        await db.trades.delete(id);
+        const match = trades.find(t => t.id === id);
+        const idsToDelete = match?.allIds || [id];
+
+        for (const targetId of idsToDelete) {
+          await supabase.from('trades').delete().eq('id', targetId);
+          await deleteLeaderTradeCopies(targetId);
+          await db.trades.delete(targetId);
+        }
       }
+
       setSelectedTrades([]);
       setShowBulkMenu(false);
       fetchCloudData();
@@ -314,14 +370,21 @@ export default function TradeViewPage() {
     if (!tagModalType || !tagInputVal.trim() || selectedTrades.length === 0) return;
     const val = tagInputVal.trim();
     const { supabase } = await import('@/lib/supabase');
+
     for (const id of selectedTrades) {
+      const match = trades.find(t => t.id === id);
+      const idsToUpdate = match?.allIds || [id];
+
       const fieldKey = tagModalType === 'setup' ? 'setup_tag' : tagModalType === 'mistake' ? 'mistake_tag' : 'strategy';
       const localFieldKey = tagModalType === 'setup' ? 'setupTag' : tagModalType === 'mistake' ? 'mistakeTag' : 'strategy';
-      
-      await supabase.from('trades').update({ [fieldKey]: val }).eq('id', id);
-      await syncLeaderTradeUpdates(id, { [localFieldKey]: val });
-      await db.trades.update(id, { [localFieldKey]: val });
+
+      for (const targetId of idsToUpdate) {
+        await supabase.from('trades').update({ [fieldKey]: val }).eq('id', targetId);
+        await syncLeaderTradeUpdates(targetId, { [localFieldKey]: val });
+        await db.trades.update(targetId, { [localFieldKey]: val });
+      }
     }
+
     setTagModalType(null);
     setTagInputVal('');
     setSelectedTrades([]);
@@ -340,21 +403,28 @@ export default function TradeViewPage() {
     const finalVal = val === '__EMPTY__' ? '' : val;
     const { supabase } = await import('@/lib/supabase');
 
+    const match = trades.find(t => t.id === tradeId);
+    const idsToUpdate = match?.allIds || [tradeId];
+
     if (field === 'account') {
       const matchedAcc = accounts.find(a => a.name === finalVal);
-      await supabase.from('trades').update({ 
-        account: finalVal || null,
-        account_group: matchedAcc ? matchedAcc.groupName : null
-      }).eq('id', tradeId);
-      await db.trades.update(tradeId, { 
-        account: finalVal || undefined,
-        accountGroup: matchedAcc ? matchedAcc.groupName : undefined
-      });
+      for (const targetId of idsToUpdate) {
+        await supabase.from('trades').update({ 
+          account: finalVal || null,
+          account_group: matchedAcc ? matchedAcc.groupName : null
+        }).eq('id', targetId);
+        await db.trades.update(targetId, { 
+          account: finalVal || undefined,
+          accountGroup: matchedAcc ? matchedAcc.groupName : undefined
+        });
+      }
     } else {
       const dbField = field === 'setupTag' ? 'setup_tag' : field === 'mistakeTag' ? 'mistake_tag' : 'strategy';
-      await supabase.from('trades').update({ [dbField]: finalVal || null }).eq('id', tradeId);
-      await syncLeaderTradeUpdates(tradeId, { [field]: finalVal });
-      await db.trades.update(tradeId, { [field]: finalVal });
+      for (const targetId of idsToUpdate) {
+        await supabase.from('trades').update({ [dbField]: finalVal || null }).eq('id', targetId);
+        await syncLeaderTradeUpdates(targetId, { [field]: finalVal });
+        await db.trades.update(targetId, { [field]: finalVal });
+      }
     }
 
     setEditingCellTradeId(null);
@@ -368,24 +438,33 @@ export default function TradeViewPage() {
     const name = newModalInputVal.trim();
     const { supabase } = await import('@/lib/supabase');
 
+    const match = trades.find(t => t.id === targetTradeIdForNewTag);
+    const idsToUpdate = match?.allIds || [targetTradeIdForNewTag];
+
     if (activeNewModalType === 'strategy') {
       const exists = await db.strategies.where('name').equals(name).first();
       if (!exists) await db.strategies.put({ name });
-      await supabase.from('trades').update({ strategy: name }).eq('id', targetTradeIdForNewTag);
-      await syncLeaderTradeUpdates(targetTradeIdForNewTag, { strategy: name });
-      await db.trades.update(targetTradeIdForNewTag, { strategy: name });
+      for (const targetId of idsToUpdate) {
+        await supabase.from('trades').update({ strategy: name }).eq('id', targetId);
+        await syncLeaderTradeUpdates(targetId, { strategy: name });
+        await db.trades.update(targetId, { strategy: name });
+      }
     } else if (activeNewModalType === 'setup') {
       const exists = await db.setups.where('name').equals(name).first();
       if (!exists) await db.setups.put({ name });
-      await supabase.from('trades').update({ setup_tag: name }).eq('id', targetTradeIdForNewTag);
-      await syncLeaderTradeUpdates(targetTradeIdForNewTag, { setupTag: name });
-      await db.trades.update(targetTradeIdForNewTag, { setupTag: name });
+      for (const targetId of idsToUpdate) {
+        await supabase.from('trades').update({ setup_tag: name }).eq('id', targetId);
+        await syncLeaderTradeUpdates(targetId, { setupTag: name });
+        await db.trades.update(targetId, { setupTag: name });
+      }
     } else if (activeNewModalType === 'mistake') {
       const exists = await db.mistakes.where('name').equals(name).first();
       if (!exists) await db.mistakes.put({ name });
-      await supabase.from('trades').update({ mistake_tag: name }).eq('id', targetTradeIdForNewTag);
-      await syncLeaderTradeUpdates(targetTradeIdForNewTag, { mistakeTag: name });
-      await db.trades.update(targetTradeIdForNewTag, { mistakeTag: name });
+      for (const targetId of idsToUpdate) {
+        await supabase.from('trades').update({ mistake_tag: name }).eq('id', targetId);
+        await syncLeaderTradeUpdates(targetId, { mistakeTag: name });
+        await db.trades.update(targetId, { mistakeTag: name });
+      }
     }
 
     setActiveNewModalType(null);
@@ -402,7 +481,6 @@ export default function TradeViewPage() {
     setEndDate('');
   };
 
-  // Drag and Drop Column Handlers
   const handleDragStart = (e: React.DragEvent, id: string) => {
     setDraggedColumnId(id);
     e.dataTransfer.effectAllowed = 'move';
@@ -447,24 +525,23 @@ export default function TradeViewPage() {
     setDropTargetColumnId(null);
   };
 
-  // KPI calculations
-  const totalPnL = trades.reduce((acc, t) => acc + (t.netPnL || 0), 0);
-  const winTrades = trades.filter(t => (t.netPnL || 0) > 0);
-  const lossTrades = trades.filter(t => (t.netPnL || 0) < 0);
+  // KPI Calculations across magnified trades
+  const totalPnL = trades.reduce((acc, t) => acc + (t.magnifiedPnL || 0), 0);
+  const winTrades = trades.filter(t => (t.magnifiedPnL || 0) > 0);
+  const lossTrades = trades.filter(t => (t.magnifiedPnL || 0) < 0);
   
   const winCount = winTrades.length;
   const lossCount = lossTrades.length;
   const winRate = trades.length > 0 ? ((winCount / trades.length) * 100).toFixed(1) : '0';
 
-  const grossWins = winTrades.reduce((acc, t) => acc + t.netPnL, 0);
-  const grossLosses = Math.abs(lossTrades.reduce((acc, t) => acc + t.netPnL, 0));
+  const grossWins = winTrades.reduce((acc, t) => acc + t.magnifiedPnL, 0);
+  const grossLosses = Math.abs(lossTrades.reduce((acc, t) => acc + t.magnifiedPnL, 0));
   const profitFactor = grossLosses > 0 ? (grossWins / grossLosses).toFixed(2) : grossWins > 0 ? '99.00' : '0.00';
 
   const avgWin = winCount > 0 ? grossWins / winCount : 0;
   const avgLoss = lossCount > 0 ? grossLosses / lossCount : 0;
   const avgWinLossRatio = avgLoss > 0 ? (avgWin / avgLoss).toFixed(2) : '0.00';
 
-  // Adjustment Calculations (Withdrawals & Deposits)
   const totalWithdrawals = filteredAdjustments
     .filter(a => a.type === 'withdrawal')
     .reduce((sum, a) => sum + Number(a.amount), 0);
@@ -483,10 +560,21 @@ export default function TradeViewPage() {
       {/* Top Filter Bar */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Trade View (Cloud Synced)</h1>
-          {activeFilterSelection.type !== 'global' && (
+          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+            <span>Trade View</span>
+            {!isIndividualAccountView && (
+              <span className="text-xs bg-[#ec3044]/10 text-[#ec3044] px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1 border border-[#ec3044]/20">
+                <Sparkles className="w-3 h-3" /> Magnified View
+              </span>
+            )}
+          </h1>
+          {activeFilterSelection.type !== 'global' ? (
             <p className="text-xs font-bold text-[#ec3044] mt-0.5">
               Scoped to {activeFilterSelection.type === 'group' ? 'Group:' : 'Account:'} {activeFilterSelection.name}
+            </p>
+          ) : (
+            <p className="text-xs text-slate-400 mt-0.5">
+              Mirrored trades across accounts are consolidated into unified executions with magnified P&L.
             </p>
           )}
         </div>
@@ -526,7 +614,7 @@ export default function TradeViewPage() {
                     type="text" 
                     value={filterSymbol} 
                     onChange={e => setFilterSymbol(e.target.value)} 
-                    placeholder="E.g. MES" 
+                    placeholder="E.g. NQ" 
                     className="w-full border border-slate-200 rounded-lg p-2 font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#ec3044]"
                   />
                 </div>
@@ -635,7 +723,7 @@ export default function TradeViewPage() {
         </div>
       </div>
 
-      {/* UNIFORMLY ALIGNED KPI CARDS */}
+      {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
         
         {/* CARD 1: Net cumulative P&L with Balance Breakdown */}
@@ -644,10 +732,10 @@ export default function TradeViewPage() {
             <span>Net cumulative P&L</span>
             <div className="relative group cursor-pointer inline-flex">
               <span className="bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded text-[10px] font-bold hover:bg-slate-200 transition">
-                {trades.length}
+                {trades.length} {trades.length === 1 ? 'execution' : 'executions'}
               </span>
               <div className="absolute left-0 top-full mt-1.5 hidden group-hover:block bg-slate-900 text-white text-[10px] font-semibold py-1 px-2.5 rounded-md shadow-xl whitespace-nowrap z-50">
-                Across {trades.length} trade{trades.length === 1 ? '' : 's'}
+                Consolidated across {scopedTrades.length} individual trade records
               </div>
             </div>
           </div>
@@ -680,7 +768,7 @@ export default function TradeViewPage() {
             <div className="relative group cursor-pointer">
               <Info className="w-3.5 h-3.5 text-slate-400 hover:text-slate-600 transition" />
               <div className="absolute right-0 top-full mt-1.5 hidden group-hover:block bg-slate-900 text-white text-[10px] font-medium p-2 rounded-lg shadow-xl w-48 text-center z-50 leading-tight">
-                Gross Profits / Gross Losses. Measures total dollar returns relative to total dollar risk.
+                Gross Profits / Gross Losses.
               </div>
             </div>
           </div>
@@ -703,7 +791,7 @@ export default function TradeViewPage() {
             <div className="relative group cursor-pointer">
               <Info className="w-3.5 h-3.5 text-slate-400 hover:text-slate-600 transition" />
               <div className="absolute right-0 top-full mt-1.5 hidden group-hover:block bg-slate-900 text-white text-[10px] font-medium p-2 rounded-lg shadow-xl w-48 text-center z-50 leading-tight">
-                Percentage of winning trades out of total trades executed.
+                Percentage of winning executions.
               </div>
             </div>
           </div>
@@ -728,7 +816,7 @@ export default function TradeViewPage() {
             <div className="relative group cursor-pointer">
               <Info className="w-3.5 h-3.5 text-slate-400 hover:text-slate-600 transition" />
               <div className="absolute right-0 top-full mt-1.5 hidden group-hover:block bg-slate-900 text-white text-[10px] font-medium p-2 rounded-lg shadow-xl w-48 text-center z-50 leading-tight">
-                Average Win ($) / Average Loss ($). Measures payoff ratio per trade.
+                Average Win ($) / Average Loss ($).
               </div>
             </div>
           </div>
@@ -755,10 +843,10 @@ export default function TradeViewPage() {
           <div className="text-xs font-bold text-slate-600">
             {selectedTrades.length > 0 ? (
               <span className="text-[#ec3044] bg-[#ec3044]/10 px-2.5 py-1 rounded-lg border border-[#ec3044]/20 font-bold">
-                {selectedTrades.length} trade(s) selected
+                {selectedTrades.length} execution(s) selected
               </span>
             ) : (
-              'All Trades'
+              <span>Showing {trades.length} execution{trades.length === 1 ? '' : 's'}</span>
             )}
           </div>
 
@@ -801,7 +889,7 @@ export default function TradeViewPage() {
           </div>
         </div>
 
-        {/* Data Table with Draggable Columns and Drop Boundary Indicator */}
+        {/* Data Table */}
         <div className="overflow-x-auto rounded-b-2xl">
           <table className="w-full text-left text-sm">
             <thead className="bg-[#F8F9FD] text-slate-500 text-xs font-semibold border-b border-slate-200/80">
@@ -864,7 +952,7 @@ export default function TradeViewPage() {
                   <td colSpan={columns.length + 1} className="py-12 text-center text-slate-400">
                     {hasActiveFilters ? (
                       <div>
-                        No trades match your active filters.{' '}
+                        No executions match your active filters.{' '}
                         <button onClick={resetFilters} className="font-bold text-[#ec3044] hover:underline cursor-pointer">
                           Reset filters
                         </button>
@@ -878,7 +966,7 @@ export default function TradeViewPage() {
                         >
                           + Add Trade
                         </button>{' '}
-                        to log your first trade!
+                        to log your first execution!
                       </div>
                     )}
                   </td>
@@ -886,7 +974,6 @@ export default function TradeViewPage() {
               ) : (
                 trades.map((trade) => {
                   const isSelected = selectedTrades.includes(trade.id!);
-                  const isFollowerCopy = Boolean(trade.leaderTradeId || trade.leader_trade_id);
 
                   return (
                     <tr 
@@ -915,19 +1002,24 @@ export default function TradeViewPage() {
                             return <td key={col.id} className="py-3.5 px-4 font-medium text-slate-600">{trade.openDate}</td>;
                           case 'symbol':
                             return (
-                              <td key={col.id} className="py-3.5 px-4 font-bold text-[#ec3044] hover:underline flex items-center gap-1.5">
-                                <span>{trade.symbol}</span>
-                                {isFollowerCopy && (
-                                  <span title="Group Follower Copy" className="text-slate-400">
-                                    <Copy className="w-3 h-3 text-slate-400" />
-                                  </span>
-                                )}
+                              <td key={col.id} className="py-3.5 px-4 font-bold text-[#ec3044] hover:underline">
+                                {trade.symbol}
                               </td>
                             );
                           case 'account':
                             return (
                               <td key={col.id} className="py-3.5 px-4 font-medium" onClick={(e) => e.stopPropagation()}>
-                                {editingCellTradeId === trade.id && editingCellType === 'account' ? (
+                                {trade.accountCount > 1 ? (
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-bold text-slate-800 flex items-center gap-1">
+                                      <Layers className="w-3.5 h-3.5 text-[#ec3044]" />
+                                      {trade.accountGroup || 'Group'}
+                                    </span>
+                                    <span className="text-[10px] bg-slate-100 text-slate-600 font-extrabold px-1.5 py-0.5 rounded-md border border-slate-200">
+                                      ×{trade.accountCount} accts
+                                    </span>
+                                  </div>
+                                ) : editingCellTradeId === trade.id && editingCellType === 'account' ? (
                                   <select 
                                     autoFocus
                                     value={trade.account || ''} 
@@ -952,23 +1044,32 @@ export default function TradeViewPage() {
                           case 'status':
                             return (
                               <td key={col.id} className="py-3.5 px-4">
-                                {trade.status === 'WIN' ? (
+                                {trade.magnifiedPnL > 0 ? (
                                   <span className="px-2.5 py-1 bg-emerald-50 text-emerald-600 border border-emerald-200 rounded text-[10px] font-bold">WIN</span>
-                                ) : (
+                                ) : trade.magnifiedPnL < 0 ? (
                                   <span className="px-2.5 py-1 bg-rose-50 text-rose-500 border border-rose-200 rounded text-[10px] font-bold">LOSS</span>
+                                ) : (
+                                  <span className="px-2.5 py-1 bg-slate-50 text-slate-500 border border-slate-200 rounded text-[10px] font-bold">BE</span>
                                 )}
                               </td>
                             );
                           case 'side':
                             return <td key={col.id} className="py-3.5 px-4 font-semibold text-slate-500">{trade.side || 'LONG'}</td>;
                           case 'entryPrice':
-                            return <td key={col.id} className="py-3.5 px-4 font-mono">${Number(trade.entryPrice).toFixed(2)}</td>;
+                            return <td key={col.id} className="py-3.5 px-4 font-mono font-semibold">${Number(trade.entryPrice).toFixed(2)}</td>;
                           case 'exitPrice':
-                            return <td key={col.id} className="py-3.5 px-4 font-mono">${Number(trade.exitPrice).toFixed(2)}</td>;
+                            return <td key={col.id} className="py-3.5 px-4 font-mono font-semibold">${Number(trade.exitPrice).toFixed(2)}</td>;
                           case 'netPnL':
                             return (
-                              <td key={col.id} className={`py-3.5 px-4 font-bold font-mono ${trade.netPnL >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                                ${Number(trade.netPnL).toFixed(2)}
+                              <td key={col.id} className="py-3.5 px-4 font-mono">
+                                <div className={`font-black text-sm ${trade.magnifiedPnL >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                  {trade.magnifiedPnL >= 0 ? '+' : '-'}${Math.abs(Number(trade.magnifiedPnL)).toFixed(2)}
+                                </div>
+                                {trade.accountCount > 1 && (
+                                  <div className="text-[10px] text-slate-400 font-semibold mt-0.5">
+                                    ${Number(trade.individualPnL).toFixed(2)} / acct
+                                  </div>
+                                )}
                               </td>
                             );
                           case 'setupTag':
@@ -1091,9 +1192,13 @@ export default function TradeViewPage() {
                 <div 
                   key={a.id || a.name} 
                   onClick={async () => { 
+                    const match = trades.find(t => t.id === contextMenu.tradeId);
+                    const idsToUpdate = match?.allIds || [contextMenu.tradeId];
                     const { supabase } = await import('@/lib/supabase');
-                    await supabase.from('trades').update({ account: a.name, account_group: a.groupName }).eq('id', contextMenu.tradeId);
-                    await db.trades.update(contextMenu.tradeId, { account: a.name, accountGroup: a.groupName });
+                    for (const targetId of idsToUpdate) {
+                      await supabase.from('trades').update({ account: a.name, account_group: a.groupName }).eq('id', targetId);
+                      await db.trades.update(targetId, { account: a.name, accountGroup: a.groupName });
+                    }
                     setContextMenu(null);
                     fetchCloudData();
                   }}
@@ -1109,18 +1214,22 @@ export default function TradeViewPage() {
 
           <button 
             onClick={async () => {
-              if (confirm('Are you sure you want to delete this trade? Follower copies across your group will also be deleted.')) {
+              if (confirm('Are you sure you want to delete this execution across all copied accounts?')) {
+                const match = trades.find(t => t.id === contextMenu.tradeId);
+                const idsToDelete = match?.allIds || [contextMenu.tradeId];
                 const { supabase } = await import('@/lib/supabase');
-                await supabase.from('trades').delete().eq('id', contextMenu.tradeId);
-                await deleteLeaderTradeCopies(contextMenu.tradeId);
-                await db.trades.delete(contextMenu.tradeId);
+                for (const targetId of idsToDelete) {
+                  await supabase.from('trades').delete().eq('id', targetId);
+                  await deleteLeaderTradeCopies(targetId);
+                  await db.trades.delete(targetId);
+                }
                 setContextMenu(null);
                 fetchCloudData();
               }
             }}
             className="flex items-center gap-2.5 w-full p-2 hover:bg-rose-50 text-rose-600 rounded-lg text-left font-bold cursor-pointer"
           >
-            <Trash2 className="w-3.5 h-3.5" /> Quick Delete Trade
+            <Trash2 className="w-3.5 h-3.5" /> Delete Across All Accounts
           </button>
         </div>
       )}
@@ -1130,7 +1239,7 @@ export default function TradeViewPage() {
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-sm p-5 shadow-xl">
             <h3 className="text-sm font-bold text-slate-900 mb-2 capitalize">
-              Apply {tagModalType} to {selectedTrades.length} selected trade(s)
+              Apply {tagModalType} to {selectedTrades.length} selected execution(s)
             </h3>
             <input 
               type="text" 
@@ -1154,7 +1263,7 @@ export default function TradeViewPage() {
         </div>
       )}
 
-      {/* DEDICATED POPUP MODAL FOR CREATING NEW TAG/STRATEGY */}
+      {/* Tag Creation Modal */}
       {activeNewModalType && (
         <div 
           onClick={() => { setActiveNewModalType(null); setNewModalInputVal(''); setTargetTradeIdForNewTag(null); }}
