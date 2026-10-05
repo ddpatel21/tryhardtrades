@@ -322,6 +322,7 @@ export default function Sidebar({ children, onOpenAddTrade }: SidebarLayoutProps
     { label: 'Dashboard & Reports', href: '/', icon: LayoutDashboard },
     { label: 'Day View', href: '/day-view', icon: CalendarDays },
     { label: 'Trade View', href: '/trade-view', icon: TableProperties },
+    { label: 'Accounts & Import', href: '/accounts', icon: Users },
     { label: 'Strategies & Tags', href: '/strategies', icon: Tags },
   ];
 
